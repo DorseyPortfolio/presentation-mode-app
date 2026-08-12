@@ -1,0 +1,13 @@
+.DS_Store
+.build/
+dist/
+work/
+*.dmg
+*.app.zip
+
+# Maintained and published as its own repository.
+companion-module-presentation-mode/
+
+# Machine-specific diagnostics and Blackmagic Desktop Video profiles stay local.
+HardwareSnapshots/
+machine-snapshots/

@@ -1,0 +1,32 @@
+PRESENTATION MODE — INSTALLATION
+
+Requirements
+• Apple silicon Mac (M1 or newer)
+• macOS 14 Sonoma or newer
+• Blackmagic Desktop Video 15.3.1 or newer installed for DeckLink output
+
+Install
+1. Drag Presentation Mode to the Applications folder.
+2. Open Applications, Control-click Presentation Mode, and choose Open.
+3. Click Open in the macOS confirmation dialog.
+4. Allow Local Network access when prompted.
+5. Enable Presentation Mode in:
+   System Settings > Privacy & Security > Screen & System Audio Recording
+6. Quit and reopen Presentation Mode after granting screen-recording access.
+7. Select the active DeckLink outputs exposed by this Mac's existing card profile.
+8. If this Mac uses NDI, enable NDI output and enter the exact sender name used
+   by ProPresenter. If it does not use NDI, leave NDI output disabled.
+
+Optional startup setup
+Add Presentation Mode under:
+System Settings > General > Login Items & Extensions > Open at Login
+
+Notes
+• The app appears in the menu bar rather than the Dock.
+• Presentation Mode listens for Bitfocus Companion on TCP port 9876.
+• If Companion runs on this Mac, connect it to 127.0.0.1:9876.
+• NDI is optional and saved separately on each Mac. New installations default
+  the sender name to “<Mac name> - NDI 1”.
+• The app does not change the DeckLink card profile or connector mapping.
+• This local installer is ad-hoc signed, not Apple-notarized. The Control-click
+  Open step is normally needed only the first time.

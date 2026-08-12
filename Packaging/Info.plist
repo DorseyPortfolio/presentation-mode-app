@@ -1,0 +1,43 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <key>CFBundleDevelopmentRegion</key>
+    <string>en</string>
+    <key>CFBundleDisplayName</key>
+    <string>Presentation Mode</string>
+	<key>CFBundleExecutable</key>
+	<string>PresentationMode</string>
+	<key>CFBundleIconFile</key>
+	<string>AppIcon</string>
+    <key>CFBundleIdentifier</key>
+	<string>com.wcmedia.PresentationMode.NDI</string>
+    <key>CFBundleInfoDictionaryVersion</key>
+    <string>6.0</string>
+    <key>CFBundleName</key>
+    <string>Presentation Mode</string>
+    <key>CFBundlePackageType</key>
+    <string>APPL</string>
+    <key>CFBundleShortVersionString</key>
+	<string>0.4.2</string>
+    <key>CFBundleVersion</key>
+	<string>7</string>
+	<key>LSMinimumSystemVersion</key>
+	<string>14.0</string>
+	<key>LSUIElement</key>
+	<true/>
+    <key>NSHighResolutionCapable</key>
+    <true/>
+	<key>NSScreenCaptureUsageDescription</key>
+	<string>Presentation Mode captures the selected presentation display and mirrors it to the room's DeckLink SDI and NDI outputs.</string>
+	<key>NSLocalNetworkUsageDescription</key>
+	<string>Presentation Mode sends the Canva presentation to production devices using NDI.</string>
+	<key>NSBonjourServices</key>
+	<array>
+		<string>_ndi._tcp</string>
+		<string>_presentation-mode._tcp</string>
+	</array>
+    <key>NSPrincipalClass</key>
+    <string>NSApplication</string>
+</dict>
+</plist>
