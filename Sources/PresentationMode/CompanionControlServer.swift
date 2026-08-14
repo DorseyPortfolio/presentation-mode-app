@@ -6,6 +6,7 @@ struct CompanionStatus: Encodable {
     let deviceName: String
     let mode: String
     let proPresenterRunning: Bool
+    let automaticProPresenterSwitchingEnabled: Bool
     let ndiRunning: Bool
     let ndiSource: String
 }
@@ -71,8 +72,9 @@ final class CompanionControlServer: @unchecked Sendable {
                     let status = self.statusProvider()
                     let body = (try? JSONEncoder().encode(status)) ?? Data("{}".utf8)
                     self.respond(connection, status: "200 OK", body: body)
-                } else if method == "POST", ["/mode/canva", "/mode/production", "/mode/auto"].contains(path) {
-                    await self.commandHandler(String(path.split(separator: "/").last ?? "auto"))
+                } else if method == "POST", ["/mode/canva", "/mode/production", "/mode/auto", "/auto/enable", "/auto/disable", "/auto/toggle"].contains(path) {
+                    let command = path.hasPrefix("/auto/") ? path.replacingOccurrences(of: "/", with: "").replacingOccurrences(of: "auto", with: "auto-") : String(path.split(separator: "/").last ?? "auto")
+                    await self.commandHandler(command)
                     let body = (try? JSONEncoder().encode(self.statusProvider())) ?? Data("{}".utf8)
                     self.respond(connection, status: "200 OK", body: body)
                 } else {

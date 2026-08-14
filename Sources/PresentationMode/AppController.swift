@@ -19,6 +19,7 @@ final class AppController: NSObject {
     private let statusLabel = NSTextField(labelWithString: "Starting…")
     private let displayPopup = NSPopUpButton()
     private let outputStack = NSStackView()
+    private let automaticSwitchingCheckbox = NSButton(checkboxWithTitle: "Automatically switch when ProPresenter opens or closes", target: nil, action: nil)
     private let ndiCheckbox = NSButton(checkboxWithTitle: "Enable NDI output", target: nil, action: nil)
     private let ndiSourceField = NSTextField()
     private let canvaButton = NSButton(title: "CANVA MODE", target: nil, action: nil)
@@ -33,6 +34,9 @@ final class AppController: NSObject {
     init(store: ConfigurationStoring = DefaultsConfigurationStore()) {
         self.store = store
         self.configuration = store.load()
+        if self.configuration.automaticProPresenterSwitchingEnabled == nil {
+            self.configuration.automaticProPresenterSwitchingEnabled = true
+        }
         if self.configuration.ndiEnabled == nil {
             self.configuration.ndiEnabled = true
         }
@@ -49,7 +53,7 @@ final class AppController: NSObject {
         configureWindow()
         configureStatusItem()
         companionServer = CompanionControlServer(
-            statusProvider: { [weak self] in self?.companionStatus ?? CompanionStatus(deviceID: CompanionControlServer.deviceID, deviceName: Host.current().localizedName ?? "Presentation Mode", mode: "offline", proPresenterRunning: false, ndiRunning: false, ndiSource: "") },
+            statusProvider: { [weak self] in self?.companionStatus ?? CompanionStatus(deviceID: CompanionControlServer.deviceID, deviceName: Host.current().localizedName ?? "Presentation Mode", mode: "offline", proPresenterRunning: false, automaticProPresenterSwitchingEnabled: true, ndiRunning: false, ndiSource: "") },
             commandHandler: { [weak self] command in await self?.handleCompanionCommand(command) }
         )
         do { try companionServer?.start() }
@@ -81,6 +85,7 @@ final class AppController: NSObject {
         CompanionStatus(deviceID: CompanionControlServer.deviceID,
                         deviceName: Host.current().localizedName ?? "Presentation Mode",
                         mode: mode.rawValue, proPresenterRunning: isProPresenterRunning,
+                        automaticProPresenterSwitchingEnabled: automaticSwitchingEnabled,
                         ndiRunning: ndiService.isRunning,
                         ndiSource: configuration.ndiEnabled == true ? (configuration.ndiSourceName ?? "") : "")
     }
@@ -89,6 +94,9 @@ final class AppController: NSObject {
         switch command {
         case "canva": await enterCanvaMode()
         case "production": await enterProductionMode(message: "Production Mode selected from Companion.")
+        case "auto-enable": await setAutomaticSwitching(true, source: "Companion")
+        case "auto-disable": await setAutomaticSwitching(false, source: "Companion")
+        case "auto-toggle": await setAutomaticSwitching(!automaticSwitchingEnabled, source: "Companion")
         default: await reconcileModeWithProPresenter()
         }
     }
@@ -103,6 +111,10 @@ final class AppController: NSObject {
 
         let subtitle = NSTextField(wrappingLabelWithString: "Automatically releases outputs for ProPresenter, then mirrors Canva to the enabled DeckLink and NDI outputs when ProPresenter is closed.")
         subtitle.textColor = .secondaryLabelColor
+
+        automaticSwitchingCheckbox.target = self
+        automaticSwitchingCheckbox.action = #selector(automaticSwitchingChanged)
+        automaticSwitchingCheckbox.state = automaticSwitchingEnabled ? .on : .off
 
         let displayLabel = NSTextField(labelWithString: "Canva display")
         displayLabel.font = .systemFont(ofSize: 13, weight: .semibold)
@@ -154,7 +166,7 @@ final class AppController: NSObject {
         statusLabel.lineBreakMode = .byWordWrapping
         statusLabel.textColor = .secondaryLabelColor
 
-        let stack = NSStackView(views: [title, subtitle, displayLabel, displayPopup, outputsLabel, outputStack, ndiLabel, ndiCheckbox, ndiSourceField, canvaButton, productionButton, statusLabel])
+        let stack = NSStackView(views: [title, subtitle, automaticSwitchingCheckbox, displayLabel, displayPopup, outputsLabel, outputStack, ndiLabel, ndiCheckbox, ndiSourceField, canvaButton, productionButton, statusLabel])
         stack.orientation = .vertical
         stack.alignment = .leading
         stack.spacing = 12
@@ -247,7 +259,7 @@ final class AppController: NSObject {
     }
 
     private func enterCanvaMode() async {
-        guard !isProPresenterRunning else {
+        guard !automaticSwitchingEnabled || !isProPresenterRunning else {
             await enterProductionMode(message: "Production Mode is locked while ProPresenter is running.")
             return
         }
@@ -268,7 +280,8 @@ final class AppController: NSObject {
             }
             mode = .canva
             let ndiStatus = configuration.ndiEnabled == true ? " and NDI source ‘\(configuration.ndiSourceName ?? "")’" : ""
-            renderState(message: "Canva Mode active on selected DeckLinks\(ndiStatus). ProPresenter will automatically reclaim production outputs when it opens.")
+            let automaticStatus = automaticSwitchingEnabled ? " ProPresenter will automatically reclaim production outputs when it opens." : " Automatic ProPresenter switching is off."
+            renderState(message: "Canva Mode active on selected DeckLinks\(ndiStatus).\(automaticStatus)")
         } catch {
             deckLinkService.stop()
             ndiService.stop()
@@ -291,7 +304,27 @@ final class AppController: NSObject {
         }
     }
 
+    private var automaticSwitchingEnabled: Bool {
+        configuration.automaticProPresenterSwitchingEnabled != false
+    }
+
+    private func setAutomaticSwitching(_ enabled: Bool, source: String? = nil) async {
+        configuration.automaticProPresenterSwitchingEnabled = enabled
+        automaticSwitchingCheckbox.state = enabled ? .on : .off
+        store.save(configuration)
+        if enabled {
+            await reconcileModeWithProPresenter()
+        } else {
+            let suffix = source.map { " from \($0)" } ?? ""
+            renderState(message: "Automatic ProPresenter switching turned off\(suffix). Mode changes are now manual.")
+        }
+    }
+
     private func reconcileModeWithProPresenter() async {
+        guard automaticSwitchingEnabled else {
+            renderState(message: "Automatic ProPresenter switching is off. Mode changes are manual.")
+            return
+        }
         guard !isTransitioning else { return }
         isTransitioning = true
         defer { isTransitioning = false }
@@ -315,7 +348,12 @@ final class AppController: NSObject {
     @objc private func workspaceApplicationChanged(_ notification: Notification) {
         guard let application = notification.userInfo?[NSWorkspace.applicationUserInfoKey] as? NSRunningApplication,
               application.localizedName?.caseInsensitiveCompare("ProPresenter") == .orderedSame else { return }
+        guard automaticSwitchingEnabled else { return }
         Task { await reconcileModeWithProPresenter() }
+    }
+
+    @objc private func automaticSwitchingChanged() {
+        Task { await setAutomaticSwitching(automaticSwitchingCheckbox.state == .on) }
     }
 
     @objc private func displayChanged() {
