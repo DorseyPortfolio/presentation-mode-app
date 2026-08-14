@@ -12,6 +12,9 @@ struct RoomConfiguration: Codable, Equatable {
     var restoreCanvaModeAtLogin = false
     // Optional preserves decoding of roomConfiguration.v1 data written by
     // earlier builds. A missing value defaults to enabled on upgrade.
+    var automaticProPresenterSwitchingEnabled: Bool?
+    // Optional preserves decoding of roomConfiguration.v1 data written by
+    // earlier builds. A missing value defaults to enabled on upgrade.
     var ndiEnabled: Bool?
     var ndiSourceName: String?
 }
