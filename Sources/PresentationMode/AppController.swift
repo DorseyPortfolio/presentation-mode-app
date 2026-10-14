@@ -132,8 +132,6 @@ final class AppController: NSObject {
         let title = NSTextField(labelWithString: "Room Display Mode")
         title.font = .systemFont(ofSize: 28, weight: .bold)
 
-        let subtitle = NSTextField(wrappingLabelWithString: "Opaque desktop to the applied room destinations. Production Mode clears keys and releases the cards. Routing changes are tucked away in Setup.")
-        subtitle.textColor = .secondaryLabelColor
 
         automaticSwitchingCheckbox.target = self
         automaticSwitchingCheckbox.action = #selector(automaticSwitchingChanged)
@@ -144,8 +142,6 @@ final class AppController: NSObject {
         displayPopup.target = self
         displayPopup.action = #selector(displayChanged)
 
-        let outputsLabel = NSTextField(labelWithString: "Applied room profile")
-        outputsLabel.font = .systemFont(ofSize: 13, weight: .semibold)
         outputStack.orientation = .vertical
         outputStack.alignment = .leading
         outputStack.spacing = 4
@@ -179,18 +175,18 @@ final class AppController: NSObject {
         statusLabel.lineBreakMode = .byWordWrapping
         statusLabel.textColor = .secondaryLabelColor
 
-        let stack = NSStackView(views: [title, subtitle, automaticSwitchingCheckbox, displayLabel, displayPopup, outputsLabel, outputStack, ndiLabel, ndiCheckbox, ndiSourceField, canvaButton, productionButton, statusLabel])
+        let stack = NSStackView(views: [title, outputStack, automaticSwitchingCheckbox, displayLabel, displayPopup, ndiLabel, ndiCheckbox, ndiSourceField, canvaButton, productionButton, statusLabel])
         stack.orientation = .vertical
         stack.alignment = .leading
         stack.spacing = 12
-        stack.setCustomSpacing(24, after: subtitle)
+        stack.setCustomSpacing(24, after: outputStack)
         stack.translatesAutoresizingMaskIntoConstraints = false
         let controls = NSView()
         controls.addSubview(stack)
         let tabs = NSTabView(frame: NSRect(x: 0, y: 0, width: 960, height: 790))
         let controlTab = NSTabViewItem(identifier: "controls"); controlTab.label = "Controls"; controlTab.view = controls
         let setupTab = NSTabViewItem(identifier: "setup"); setupTab.label = "Setup"
-        setupTab.view = SetupView(saved: { [unowned self] in self.profiles }, devices: { [unowned self] in self.deckLinkService.outputs.map(\.capability) }, stopped: { [unowned self] in self.outputsStopped }, refresh: { [unowned self] in self.deckLinkService.discover() }, apply: { [unowned self] library in try self.applyProfiles(library) })
+        setupTab.view = SetupView(loadDiagnostic: { [unowned self] in self.profileLoadError }, saved: { [unowned self] in self.profiles }, devices: { [unowned self] in self.deckLinkService.outputs.map(\.capability) }, stopped: { [unowned self] in self.outputsStopped }, refresh: { [unowned self] in self.deckLinkService.discover() }, apply: { [unowned self] library in try self.applyProfiles(library) })
         tabs.addTabViewItem(controlTab); tabs.addTabViewItem(setupTab); tabs.selectTabViewItem(at: 0)
         window.contentView = tabs
         NSLayoutConstraint.activate([
@@ -209,11 +205,13 @@ final class AppController: NSObject {
     private var outputsStopped: Bool { !isTransitioning && mode == .production && !deckLinkService.isRunning && !ndiService.isRunning }
     private func refreshProfileSummary() {
         outputStack.arrangedSubviews.forEach { outputStack.removeArrangedSubview($0); $0.removeFromSuperview() }
-        for d in profiles.active?.destinations ?? [] {
-            outputStack.addArrangedSubview(NSTextField(labelWithString: "\(d.name): \(d.key == nil ? "Direct" : "Fill + Key") • \(d.timing.rawValue)"))
-        }
-        if let error = profileLoadError { outputStack.addArrangedSubview(NSTextField(wrappingLabelWithString: error)) }
+        let active = profileLoadError == nil ? profiles.active : nil
+        let heading = NSTextField(labelWithString: active == nil ? "No room profile loaded" : "Room profile loaded")
+        heading.font = .systemFont(ofSize: 13, weight: .semibold)
+        outputStack.addArrangedSubview(heading)
+        outputStack.addArrangedSubview(NSTextField(labelWithString: active?.name ?? "Open Setup to select a room profile."))
     }
+
     private func applyProfiles(_ library: RoomProfileLibrary) throws {
         guard outputsStopped else { throw ProfileError.invalid("Stop all outputs before applying settings.") }
         if let active = library.active {

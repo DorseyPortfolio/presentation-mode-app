@@ -29,3 +29,9 @@ Offline verification covers the accepted mixed-cadence route, all eight timings,
 ## Release boundary
 
 Review this candidate on an idle machine first. Do not install over accepted 0.4.5 or launch armed while another app owns the outputs. No fleet update is needed merely because Largo required fill/key. A general release should retain per-room configuration and ship only after UI, migration and scheduled hardware validation. Existing Companion 1.2.0 protocol behavior is retained; live Companion testing was not repeated for this preview.
+
+## Controls simplification and flexible rooms
+
+Controls now displays “Room profile loaded” and the dynamic active room name. Routing summaries and explanatory technical subtext were removed. Missing/failed profile load gets an honest no-profile prompt; details stay in Setup. UI test renamed the applied preview profile and verified Controls followed it, then restored Largo Pro1. New room creates an empty profile, with no inherited Largo assignments. Destination names, endpoints and timings are profile data. Generic Setup notes are in SETUP-NOTES.md.
+
+Latest UI review confirmed New room and Add destination in the visible preview. Computer-use transport closed during a subsequent draft rename/validate operation; that operation is uncertain. No Apply was requested for the new room test, so saved Largo remains active. Preview was left open for Joseph and may show the unsaved New room draft; use Revert draft to return to the applied profile. Hardware remains disabled.

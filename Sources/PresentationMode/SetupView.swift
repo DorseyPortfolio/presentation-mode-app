@@ -8,6 +8,7 @@ private final class TopAlignedClipView: NSClipView {
 @MainActor
 final class SetupView: NSView {
     private var draft: RoomProfileLibrary
+    private let loadDiagnostic: () -> String?
     private let saved: () -> RoomProfileLibrary
     private let devices: () -> [OutputCapability]
     private let stopped: () -> Bool
@@ -21,20 +22,22 @@ final class SetupView: NSView {
     private let applyButton = NSButton(title: "Apply profile", target: nil, action: nil)
     private let revertButton = NSButton(title: "Revert draft", target: nil, action: nil)
 
-    init(saved: @escaping () -> RoomProfileLibrary, devices: @escaping () -> [OutputCapability], stopped: @escaping () -> Bool, refresh: @escaping () -> Void, apply: @escaping (RoomProfileLibrary) throws -> Void) {
+    init(loadDiagnostic: @escaping () -> String?, saved: @escaping () -> RoomProfileLibrary, devices: @escaping () -> [OutputCapability], stopped: @escaping () -> Bool, refresh: @escaping () -> Void, apply: @escaping (RoomProfileLibrary) throws -> Void) {
+        self.loadDiagnostic = loadDiagnostic
         self.saved = saved; self.devices = devices; self.stopped = stopped; self.refresh = refresh; self.apply = apply
         self.draft = saved()
         super.init(frame: .zero)
         profilePicker.target = self; profilePicker.action = #selector(selectProfile)
         name.placeholderString = "Room name"
         let duplicate = NSButton(title: "Duplicate room", target: self, action: #selector(duplicateProfile))
+        let newRoom = NSButton(title: "New room", target: self, action: #selector(newProfile))
         let add = NSButton(title: "Add destination", target: self, action: #selector(addDestination))
         let scan = NSButton(title: "Refresh devices", target: self, action: #selector(refreshDevices))
         let check = NSButton(title: "Validate draft", target: self, action: #selector(validateDraft))
         applyButton.target = self; applyButton.action = #selector(applyDraft)
         revertButton.target = self; revertButton.action = #selector(revertDraft)
         let intro = NSTextField(wrappingLabelWithString: "SETUP • Changes stay in this draft until you Apply with all outputs stopped. Select Direct for an ordinary picture output, or Fill + Key for a synchronized pair.")
-        let matte = NSTextField(wrappingLabelWithString: "Opaque desktop: picture alpha is solid. Paired key is white while active, black on stop. Direct destinations send picture only. Confidence remains direct in the Largo profile.")
+        let matte = NSTextField(wrappingLabelWithString: "Opaque desktop: picture alpha is solid. Paired key is white while active, black on stop. Direct destinations send picture only. Destination names and assignments belong to the selected room profile.")
         matte.textColor = .secondaryLabelColor
         rows.orientation = .vertical; rows.alignment = .leading; rows.spacing = 12
         let scroll = NSScrollView(); scroll.hasVerticalScroller = true
@@ -43,7 +46,7 @@ final class SetupView: NSView {
         NSLayoutConstraint.activate([rows.leadingAnchor.constraint(equalTo: scroll.contentView.leadingAnchor), rows.topAnchor.constraint(equalTo: scroll.contentView.topAnchor), rows.widthAnchor.constraint(equalTo: scroll.contentView.widthAnchor)])
         diagnostics.font = .monospacedSystemFont(ofSize: 11, weight: .regular)
         diagnostics.maximumNumberOfLines = 8
-        let top = NSStackView(views: [profilePicker, name, duplicate]); top.distribution = .fillEqually
+        let top = NSStackView(views: [profilePicker, name, newRoom, duplicate]); top.distribution = .fillEqually
         let buttons = NSStackView(views: [add, scan, check, revertButton, applyButton])
         let stack = NSStackView(views: [intro, top, matte, scroll, buttons, diagnostics])
         stack.orientation = .vertical; stack.alignment = .leading; stack.spacing = 14
@@ -68,9 +71,14 @@ final class SetupView: NSView {
             }
         }
         for editor in editors { rows.addArrangedSubview(editor); editor.widthAnchor.constraint(equalTo: rows.widthAnchor).isActive = true }
-        diagnostics.stringValue = "Draft only. \(devices().count) active playback endpoints found. Apply rechecks device support."
+        diagnostics.stringValue = loadDiagnostic() ?? "Draft only. \(devices().count) active playback endpoints found. Apply rechecks device support."
     }
     @objc private func selectProfile() { let selected = profilePicker.indexOfSelectedItem; collect(); draft.activeID = draft.profiles[selected].id; reload() }
+    @objc private func newProfile() {
+        collect()
+        let room = RoomProfile(name: "New room", destinations: [])
+        draft.profiles.append(room); draft.activeID = room.id; reload()
+    }
     @objc private func duplicateProfile() {
         collect(); var copy = draft.profiles[index]; copy.id = UUID(); copy.name += " copy"
         copy.destinations = copy.destinations.map { var d = $0; d.id = UUID(); return d }
