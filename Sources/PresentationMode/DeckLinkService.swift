@@ -13,9 +13,15 @@ struct DeckLinkOutput: Identifiable, Equatable {
 /// DeckLink is intentionally isolated here so the controller and capture pipeline
 /// remain testable without Blackmagic hardware. The production implementation will
 /// bind this service to the Blackmagic Desktop Video SDK.
-final class DeckLinkService {
+// UI discovery state is main-thread owned; frame submission uses the native mutex.
+final class DeckLinkService: @unchecked Sendable {
     private(set) var outputs: [DeckLinkOutput] = []
-    private(set) var isRunning = false
+    var isRunning: Bool { state.code > 0 }
+    var state: (code: Int32, message: String) {
+        var buffer = Array<CChar>(repeating: 0, count: 1024)
+        let code = pm_decklink_session_status(session, &buffer, buffer.count)
+        return (code, Self.decodeError(buffer))
+    }
     private let session = pm_decklink_session_create()
 
     deinit {
@@ -83,93 +89,30 @@ final class DeckLinkService {
         }
     }
 
-    func start(outputIDs: Set<String>, standard: String) throws {
-        guard !outputs.isEmpty else { throw DeckLinkError.runtimeUnavailable }
-        guard !outputIDs.isEmpty else { throw DeckLinkError.noOutputsSelected }
-        guard standard == "1080p59.94" else { throw DeckLinkError.unsupportedStandard(standard) }
-
-        let selected = outputIDs.sorted()
-        let allocatedStrings = selected.map { strdup($0) }
-        let cStrings: [UnsafePointer<CChar>?] = allocatedStrings.map { pointer in
-            pointer.map { UnsafePointer($0) }
-        }
-        defer { allocatedStrings.forEach { free($0) } }
-        var errorBuffer = Array<CChar>(repeating: 0, count: 512)
-        let result = cStrings.withUnsafeBufferPointer { ids in
-            errorBuffer.withUnsafeMutableBufferPointer { error in
-                pm_decklink_session_start(
-                    session,
-                    ids.baseAddress,
-                    Int32(ids.count),
-                    error.baseAddress,
-                    error.count
-                )
-            }
-        }
-        guard result == 0 else {
-            throw DeckLinkError.playbackFailure(Self.decodeError(errorBuffer))
-        }
-        isRunning = true
+    func start() throws {
+        var errorBuffer = Array<CChar>(repeating: 0, count: 1024)
+        let result = pm_decklink_session_start(session, &errorBuffer, errorBuffer.count)
+        guard result == 0 else { throw DeckLinkError.playbackFailure(Self.decodeError(errorBuffer)) }
     }
 
     func enqueue(_ sampleBuffer: CMSampleBuffer) {
-        guard isRunning, let pixelBuffer = CMSampleBufferGetImageBuffer(sampleBuffer) else { return }
-        guard Self.forceOpaqueAlpha(pixelBuffer) else {
-            fputs("DeckLink playback error: captured frame is not writable 32-bit BGRA.\n", stderr)
-            return
-        }
-        var errorBuffer = Array<CChar>(repeating: 0, count: 512)
-        let result = errorBuffer.withUnsafeMutableBufferPointer { error in
-            pm_decklink_session_enqueue_pixel_buffer(
-                session,
-                Unmanaged.passUnretained(pixelBuffer).toOpaque(),
-                error.baseAddress,
-                error.count
-            )
-        }
-        if result < 0 {
-            let message = Self.decodeError(errorBuffer)
-            fputs("DeckLink playback error: \(message)\n", stderr)
-        }
+        guard let pixelBuffer = CMSampleBufferGetImageBuffer(sampleBuffer) else { return }
+        var errorBuffer = Array<CChar>(repeating: 0, count: 1024)
+        let result = pm_decklink_session_enqueue_pixel_buffer(session,
+            Unmanaged.passUnretained(pixelBuffer).toOpaque(), &errorBuffer, errorBuffer.count)
+        if result < 0 { fputs("DeckLink frame rejected: \(Self.decodeError(errorBuffer))\n", stderr) }
     }
 
-    func stop() {
-        pm_decklink_session_stop(session)
-        isRunning = false
+    @discardableResult
+    func stop() -> String? {
+        var errorBuffer = Array<CChar>(repeating: 0, count: 1024)
+        let result = pm_decklink_session_stop(session, &errorBuffer, errorBuffer.count)
+        return result < 0 ? Self.decodeError(errorBuffer) : nil
     }
 
     private static func decodeError(_ buffer: [CChar]) -> String {
         let bytes = buffer.prefix { $0 != 0 }.map { UInt8(bitPattern: $0) }
         return String(decoding: bytes, as: UTF8.self)
-    }
-
-    /// ScreenCaptureKit supplies BGRA. DeckLink and downstream keyers may
-    /// preserve its fourth byte, so make the presentation desktop explicitly
-    /// opaque before scheduling it. For BGRA memory order, vImage's channel
-    /// mask bit 0x1 addresses the fourth (alpha) byte.
-    private static func forceOpaqueAlpha(_ pixelBuffer: CVPixelBuffer) -> Bool {
-        guard CVPixelBufferGetPixelFormatType(pixelBuffer) == kCVPixelFormatType_32BGRA,
-              CVPixelBufferLockBaseAddress(pixelBuffer, []) == kCVReturnSuccess,
-              let baseAddress = CVPixelBufferGetBaseAddress(pixelBuffer) else {
-            return false
-        }
-        defer { CVPixelBufferUnlockBaseAddress(pixelBuffer, []) }
-
-        let image = vImage_Buffer(
-            data: baseAddress,
-            height: vImagePixelCount(CVPixelBufferGetHeight(pixelBuffer)),
-            width: vImagePixelCount(CVPixelBufferGetWidth(pixelBuffer)),
-            rowBytes: CVPixelBufferGetBytesPerRow(pixelBuffer)
-        )
-        var source = image
-        var destination = image
-        return vImageOverwriteChannelsWithScalar_ARGB8888(
-            255,
-            &source,
-            &destination,
-            0x1,
-            vImage_Flags(kvImageNoFlags)
-        ) == kvImageNoError
     }
 
     enum DeckLinkError: LocalizedError {

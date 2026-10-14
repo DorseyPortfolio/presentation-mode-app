@@ -22,5 +22,5 @@ for record in records.prefix(Int(min(count, result))) {
         $0.withMemoryRebound(to: CChar.self, capacity: 256) { String(cString: $0) }
     }
     let id = String(format: "%016llx:%lld", record.persistent_id, record.subdevice_index)
-    print("\(id) | \(name) | playback=\(record.supports_playback) active=\(record.is_active) 1080p59.94-bgra=\(record.supports_1080p5994_bgra)")
+    print("\(id) | \(name) | playback=\(record.supports_playback) active=\(record.is_active) 1080p59.94=\(record.supports_1080p5994_bgra) 1080p50=\(record.supports_1080p50) synchronizedPlayback=\(record.supports_sync_group)")
 }
