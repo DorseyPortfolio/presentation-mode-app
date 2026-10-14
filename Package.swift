@@ -1,5 +1,8 @@
 // swift-tools-version: 6.0
 import PackageDescription
+import Foundation
+
+let production = ProcessInfo.processInfo.environment["PRESENTATION_MODE_BUILD_FLAVOR"] == "production"
 
 let package = Package(
     name: "PresentationMode",
@@ -13,8 +16,8 @@ let package = Package(
             name: "DeckLinkBridge",
             path: "Sources/DeckLinkBridge",
             publicHeadersPath: "include",
-            cxxSettings: [.headerSearchPath("SDK")],
-            linkerSettings: [.linkedFramework("CoreFoundation")]
+            cxxSettings: [.headerSearchPath("SDK")] + (production ? [.define("PM_PRODUCTION_BUILD")] : []),
+            linkerSettings: [.linkedFramework("CoreFoundation"), .linkedFramework("CoreVideo")]
         ),
         .target(
             name: "NDIBridge",
@@ -30,6 +33,7 @@ let package = Package(
         .executableTarget(
             name: "PresentationMode",
             dependencies: ["DeckLinkBridge", "NDIBridge"],
+            swiftSettings: production ? [.define("PRESENTATION_MODE_PRODUCTION")] : [],
             linkerSettings: [
                 .linkedFramework("AppKit"),
                 .linkedFramework("Accelerate"),

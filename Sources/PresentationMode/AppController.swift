@@ -3,6 +3,9 @@ import CoreGraphics
 
 @MainActor
 final class AppController: NSObject {
+    private let profileStore = RoomProfileStore()
+    private var profiles = RoomProfileLibrary.initial
+    private var profileLoadError: String?
     private let store: ConfigurationStoring
     private let captureService = DisplayCaptureService()
     private let deckLinkService = DeckLinkService()
@@ -12,6 +15,10 @@ final class AppController: NSObject {
     private var mode: PlayoutMode = .production
     private var displays: [DisplayChoice] = []
     private var isTransitioning = false
+    private var healthTimer: Timer?
+    private var lastError = ""
+    private var startTime: Date?
+    private var transitionGeneration = 0
     private var companionServer: CompanionControlServer?
     private var statusItem: NSStatusItem?
     private var statusMenu: NSMenu?
@@ -25,7 +32,7 @@ final class AppController: NSObject {
     private let canvaButton = NSButton(title: "CANVA MODE", target: nil, action: nil)
     private let productionButton = NSButton(title: "PRODUCTION MODE", target: nil, action: nil)
     private let window = NSWindow(
-        contentRect: NSRect(x: 0, y: 0, width: 620, height: 610),
+        contentRect: NSRect(x: 0, y: 0, width: 960, height: 790),
         styleMask: [.titled, .closable, .miniaturizable],
         backing: .buffered,
         defer: false
@@ -35,14 +42,14 @@ final class AppController: NSObject {
         self.store = store
         self.configuration = store.load()
         if self.configuration.automaticProPresenterSwitchingEnabled == nil {
-            self.configuration.automaticProPresenterSwitchingEnabled = true
+            self.configuration.automaticProPresenterSwitchingEnabled = BuildPolicy.isProduction
         }
         if self.configuration.ndiEnabled == nil {
-            self.configuration.ndiEnabled = true
+            self.configuration.ndiEnabled = BuildPolicy.isProduction
         }
         if self.configuration.ndiSourceName?.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty != false {
             let hostName = Host.current().localizedName ?? "Presentation Mode"
-            self.configuration.ndiSourceName = "\(hostName) - NDI 1"
+            self.configuration.ndiSourceName = BuildPolicy.isProduction ? "\(hostName) - NDI" : "\(hostName) - Validation NDI"
         }
         super.init()
         store.save(self.configuration)
@@ -50,21 +57,36 @@ final class AppController: NSObject {
 
     func launch() {
         deckLinkService.discover()
+        do {
+            profiles = try profileStore.load()
+            if let active = profiles.active { try deckLinkService.configure(active, validateDevices: false) }
+        } catch { profileLoadError = error.localizedDescription }
         configureWindow()
         configureStatusItem()
+        // Expose validation controls before the operator hands over outputs.
+        showWindow()
         companionServer = CompanionControlServer(
             statusProvider: { [weak self] in self?.companionStatus ?? CompanionStatus(deviceID: CompanionControlServer.deviceID, deviceName: Host.current().localizedName ?? "Presentation Mode", mode: "offline", proPresenterRunning: false, automaticProPresenterSwitchingEnabled: true, ndiRunning: false, ndiSource: "") },
             commandHandler: { [weak self] command in await self?.handleCompanionCommand(command) }
         )
-        do { try companionServer?.start() }
+        do {
+            if BuildPolicy.companionEnabled() { try companionServer?.start(port: BuildPolicy.companionPort) }
+        }
         catch { renderState(message: "Companion API could not start: \(error.localizedDescription)") }
         let workspaceCenter = NSWorkspace.shared.notificationCenter
         workspaceCenter.addObserver(self, selector: #selector(workspaceApplicationChanged(_:)), name: NSWorkspace.didLaunchApplicationNotification, object: nil)
         workspaceCenter.addObserver(self, selector: #selector(workspaceApplicationChanged(_:)), name: NSWorkspace.didTerminateApplicationNotification, object: nil)
+        captureService.onFailure = { [weak self] message in
+            Task { @MainActor in await self?.failPlayback("Capture stopped: " + message) }
+        }
+        healthTimer = Timer.scheduledTimer(withTimeInterval: 0.25, repeats: true) { [weak self] _ in
+            Task { @MainActor in await self?.checkPlaybackHealth() }
+        }
         Task {
             await refreshDisplays()
-            await reconcileModeWithProPresenter()
+            if BuildPolicy.isProduction { await reconcileModeWithProPresenter() }
         }
+        // Validation always opens stopped; production honors saved automatic switching.
     }
 
     deinit {
@@ -73,18 +95,19 @@ final class AppController: NSObject {
     }
 
     func prepareForTermination() async {
+        healthTimer?.invalidate()
         companionServer?.stop()
         companionServer = nil
-        await captureService.stop()
-        ndiService.stop()
         deckLinkService.stop()
+        ndiService.stop()
+        await captureService.stop()
         mode = .production
     }
 
     private var companionStatus: CompanionStatus {
         CompanionStatus(deviceID: CompanionControlServer.deviceID,
                         deviceName: Host.current().localizedName ?? "Presentation Mode",
-                        mode: mode.rawValue, proPresenterRunning: isProPresenterRunning,
+                        mode: mode.rawValue, lastError: lastError, routing: "largo-opaque-desktop", proPresenterRunning: isProPresenterRunning,
                         automaticProPresenterSwitchingEnabled: automaticSwitchingEnabled,
                         ndiRunning: ndiService.isRunning,
                         ndiSource: configuration.ndiEnabled == true ? (configuration.ndiSourceName ?? "") : "")
@@ -102,15 +125,13 @@ final class AppController: NSObject {
     }
 
     private func configureWindow() {
-        window.title = "Presentation Mode"
+        window.title = BuildPolicy.isProduction ? "Presentation Mode" : "Presentation Mode — Settings Preview"
         window.center()
         window.isReleasedWhenClosed = false
 
         let title = NSTextField(labelWithString: "Room Display Mode")
         title.font = .systemFont(ofSize: 28, weight: .bold)
 
-        let subtitle = NSTextField(wrappingLabelWithString: "Automatically releases outputs for ProPresenter, then mirrors Canva to the enabled DeckLink and NDI outputs when ProPresenter is closed.")
-        subtitle.textColor = .secondaryLabelColor
 
         automaticSwitchingCheckbox.target = self
         automaticSwitchingCheckbox.action = #selector(automaticSwitchingChanged)
@@ -121,22 +142,10 @@ final class AppController: NSObject {
         displayPopup.target = self
         displayPopup.action = #selector(displayChanged)
 
-        let outputsLabel = NSTextField(labelWithString: "Mirrored SDI outputs")
-        outputsLabel.font = .systemFont(ofSize: 13, weight: .semibold)
-        outputStack.orientation = .horizontal
-        outputStack.spacing = 14
-        if configuration.videoStandard != "1080p59.94" || configuration.enabledOutputIDs.isEmpty {
-            configuration.videoStandard = "1080p59.94"
-            configuration.enabledOutputIDs = Set(deckLinkService.outputs.lazy.filter(\.supports1080p5994).prefix(2).map(\.id))
-            store.save(configuration)
-        }
-        for output in deckLinkService.outputs {
-            let checkbox = NSButton(checkboxWithTitle: output.name, target: self, action: #selector(outputChanged(_:)))
-            checkbox.identifier = NSUserInterfaceItemIdentifier(output.id)
-            checkbox.state = configuration.enabledOutputIDs.contains(output.id) ? .on : .off
-            checkbox.isEnabled = output.supports1080p5994
-            outputStack.addArrangedSubview(checkbox)
-        }
+        outputStack.orientation = .vertical
+        outputStack.alignment = .leading
+        outputStack.spacing = 4
+        refreshProfileSummary()
 
         let ndiLabel = NSTextField(labelWithString: "NDI output (optional)")
         ndiLabel.font = .systemFont(ofSize: 13, weight: .semibold)
@@ -166,18 +175,24 @@ final class AppController: NSObject {
         statusLabel.lineBreakMode = .byWordWrapping
         statusLabel.textColor = .secondaryLabelColor
 
-        let stack = NSStackView(views: [title, subtitle, automaticSwitchingCheckbox, displayLabel, displayPopup, outputsLabel, outputStack, ndiLabel, ndiCheckbox, ndiSourceField, canvaButton, productionButton, statusLabel])
+        let stack = NSStackView(views: [title, outputStack, automaticSwitchingCheckbox, displayLabel, displayPopup, ndiLabel, ndiCheckbox, ndiSourceField, canvaButton, productionButton, statusLabel])
         stack.orientation = .vertical
         stack.alignment = .leading
         stack.spacing = 12
-        stack.setCustomSpacing(24, after: subtitle)
+        stack.setCustomSpacing(24, after: outputStack)
         stack.translatesAutoresizingMaskIntoConstraints = false
-        window.contentView = NSView()
-        window.contentView?.addSubview(stack)
+        let controls = NSView()
+        controls.addSubview(stack)
+        let tabs = NSTabView(frame: NSRect(x: 0, y: 0, width: 960, height: 790))
+        let controlTab = NSTabViewItem(identifier: "controls"); controlTab.label = "Controls"; controlTab.view = controls
+        let setupTab = NSTabViewItem(identifier: "setup"); setupTab.label = "Setup"
+        setupTab.view = SetupView(loadDiagnostic: { [unowned self] in self.profileLoadError }, saved: { [unowned self] in self.profiles }, inventory: { [unowned self] in self.deckLinkService.inventory }, stopped: { [unowned self] in self.outputsStopped }, refresh: { [unowned self] in self.deckLinkService.discover() }, apply: { [unowned self] library in try self.applyProfiles(library) })
+        tabs.addTabViewItem(controlTab); tabs.addTabViewItem(setupTab); tabs.selectTabViewItem(at: 0)
+        window.contentView = tabs
         NSLayoutConstraint.activate([
-            stack.leadingAnchor.constraint(equalTo: window.contentView!.leadingAnchor, constant: 32),
-            stack.trailingAnchor.constraint(equalTo: window.contentView!.trailingAnchor, constant: -32),
-            stack.topAnchor.constraint(equalTo: window.contentView!.topAnchor, constant: 28),
+            stack.leadingAnchor.constraint(equalTo: controls.leadingAnchor, constant: 32),
+            stack.trailingAnchor.constraint(equalTo: controls.trailingAnchor, constant: -32),
+            stack.topAnchor.constraint(equalTo: controls.topAnchor, constant: 28),
             canvaButton.widthAnchor.constraint(equalTo: stack.widthAnchor),
             productionButton.widthAnchor.constraint(equalTo: stack.widthAnchor),
             displayPopup.widthAnchor.constraint(equalTo: stack.widthAnchor),
@@ -185,6 +200,34 @@ final class AppController: NSObject {
         ])
 
         renderState(message: deckLinkService.dependencyMessage)
+    }
+
+    private var outputsStopped: Bool { !isTransitioning && mode == .production && !deckLinkService.isRunning && !ndiService.isRunning }
+    private func refreshProfileSummary() {
+        outputStack.arrangedSubviews.forEach { outputStack.removeArrangedSubview($0); $0.removeFromSuperview() }
+        let active = profileLoadError == nil ? profiles.active : nil
+        let heading = NSTextField(labelWithString: active == nil ? "No room profile loaded" : "Room profile loaded")
+        heading.font = .systemFont(ofSize: 13, weight: .semibold)
+        outputStack.addArrangedSubview(heading)
+        outputStack.addArrangedSubview(NSTextField(labelWithString: active?.name ?? "Open Setup to select a room profile."))
+    }
+
+    private func applyProfiles(_ library: RoomProfileLibrary) throws {
+        guard outputsStopped else { throw ProfileError.invalid("Stop all outputs before applying settings.") }
+        if let active = library.active {
+            let errors = active.problems()
+            guard errors.isEmpty else { throw ProfileError.invalid(errors.joined(separator: "\n")) }
+        }
+        try library.validate()
+        guard let active = library.active else { throw ProfileError.invalid("Select a room profile.") }
+        deckLinkService.discover()
+        try deckLinkService.configure(active)
+        do { try profileStore.save(library) }
+        catch {
+            if let previous = profiles.active { try? deckLinkService.configure(previous, validateDevices: false) }
+            throw error
+        }
+        profiles = library; profileLoadError = nil; refreshProfileSummary()
     }
 
     private func configureStatusItem() {
@@ -227,7 +270,7 @@ final class AppController: NSObject {
         }
     }
 
-    @objc private func showWindow() {
+    @objc func showWindow() {
         window.makeKeyAndOrderFront(nil)
         NSApp.activate(ignoringOtherApps: true)
     }
@@ -259,6 +302,11 @@ final class AppController: NSObject {
     }
 
     private func enterCanvaMode() async {
+        guard !isTransitioning, mode != .canva else { return }
+        isTransitioning = true
+        transitionGeneration += 1
+        let generation = transitionGeneration
+        defer { isTransitioning = false }
         guard !automaticSwitchingEnabled || !isProPresenterRunning else {
             await enterProductionMode(message: "Production Mode is locked while ProPresenter is running.")
             return
@@ -268,33 +316,47 @@ final class AppController: NSObject {
             return
         }
         do {
-            try deckLinkService.start(outputIDs: configuration.enabledOutputIDs, standard: configuration.videoStandard)
+            lastError = ""
+            // Check permission before claiming outputs; never prompt in a retry loop.
+            guard CGPreflightScreenCaptureAccess() else { throw DisplayCaptureService.CaptureError.permissionUnavailable }
+            if let error = profileLoadError { throw ProfileError.invalid(error) }
+            guard let active = profiles.active else { throw ProfileError.invalid("No active room profile.") }
+            deckLinkService.discover()
+            try deckLinkService.configure(active)
+            try deckLinkService.start()
             if configuration.ndiEnabled == true {
                 try ndiService.start(sourceName: configuration.ndiSourceName ?? "")
             }
-            try await captureService.start(displayID: displayID) { [weak self] frame in
-                self?.deckLinkService.enqueue(frame)
-                if self?.configuration.ndiEnabled == true {
-                    self?.ndiService.send(frame)
-                }
+            let deckLinkSink = deckLinkService
+            let ndiSink = ndiService
+            let sendNDI = configuration.ndiEnabled == true
+            try await captureService.start(displayID: displayID) { frame in
+                deckLinkSink.enqueue(frame)
+                if sendNDI { ndiSink.send(frame) }
+            }
+            guard generation == transitionGeneration else {
+                deckLinkService.stop()
+                ndiService.stop()
+                await captureService.stop()
+                return
             }
             mode = .canva
+            startTime = Date()
             let ndiStatus = configuration.ndiEnabled == true ? " and NDI source ‘\(configuration.ndiSourceName ?? "")’" : ""
             let automaticStatus = automaticSwitchingEnabled ? " ProPresenter will automatically reclaim production outputs when it opens." : " Automatic ProPresenter switching is off."
             renderState(message: "Canva Mode active on selected DeckLinks\(ndiStatus).\(automaticStatus)")
-        } catch {
-            deckLinkService.stop()
-            ndiService.stop()
-            renderState(message: error.localizedDescription)
-        }
+        } catch { await failPlayback(error.localizedDescription) }
     }
 
     private func enterProductionMode(message: String = "DeckLink outputs are released for production software.") async {
-        await captureService.stop()
+        transitionGeneration += 1
+        let cleanupError = deckLinkService.stop()
         ndiService.stop()
-        deckLinkService.stop()
+        await captureService.stop()
         mode = .production
-        renderState(message: message)
+        startTime = nil
+        if let cleanupError { lastError = cleanupError }
+        renderState(message: cleanupError ?? message)
     }
 
     private var isProPresenterRunning: Bool {
@@ -325,14 +387,24 @@ final class AppController: NSObject {
             renderState(message: "Automatic ProPresenter switching is off. Mode changes are manual.")
             return
         }
-        guard !isTransitioning else { return }
-        isTransitioning = true
-        defer { isTransitioning = false }
-
         if isProPresenterRunning {
             await enterProductionMode(message: "Production Mode is locked while ProPresenter is running.")
-        } else {
+        } else if !isTransitioning {
             await enterCanvaMode()
+        }
+    }
+
+    private func failPlayback(_ message: String) async {
+        lastError = message
+        await enterProductionMode(message: message)
+    }
+
+    private func checkPlaybackHealth() async {
+        guard mode == .canva, !isTransitioning else { return }
+        let state = deckLinkService.state
+        if state.code < 0 { await failPlayback(state.message) }
+        else if state.code == 1, let startTime, Date().timeIntervalSince(startTime) > 3 {
+            await failPlayback("No complete capture frame arrived; keys cleared and outputs released.")
         }
     }
 

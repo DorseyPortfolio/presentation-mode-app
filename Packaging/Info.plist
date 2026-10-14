@@ -5,23 +5,23 @@
     <key>CFBundleDevelopmentRegion</key>
     <string>en</string>
     <key>CFBundleDisplayName</key>
-    <string>Presentation Mode</string>
+    <string>Presentation Mode Settings Preview</string>
 	<key>CFBundleExecutable</key>
 	<string>PresentationMode</string>
 	<key>CFBundleIconFile</key>
 	<string>AppIcon</string>
     <key>CFBundleIdentifier</key>
-	<string>com.wcmedia.PresentationMode.NDI</string>
+	<string>com.wcmedia.PresentationMode.SettingsPreview</string>
     <key>CFBundleInfoDictionaryVersion</key>
     <string>6.0</string>
     <key>CFBundleName</key>
-    <string>Presentation Mode</string>
+    <string>Presentation Mode Settings Preview</string>
     <key>CFBundlePackageType</key>
     <string>APPL</string>
     <key>CFBundleShortVersionString</key>
-	<string>0.4.3</string>
+	<string>0.5.0</string>
     <key>CFBundleVersion</key>
-	<string>8</string>
+	<string>12</string>
 	<key>LSMinimumSystemVersion</key>
 	<string>14.0</string>
 	<key>LSUIElement</key>

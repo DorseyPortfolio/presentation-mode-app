@@ -5,6 +5,8 @@ struct CompanionStatus: Encodable {
     let deviceID: String
     let deviceName: String
     let mode: String
+    var lastError: String = ""
+    var routing: String = "largo-opaque-desktop"
     let proPresenterRunning: Bool
     let automaticProPresenterSwitchingEnabled: Bool
     let ndiRunning: Bool
@@ -27,14 +29,19 @@ final class CompanionControlServer: @unchecked Sendable {
 
     func start(port: UInt16 = 9876) throws {
         guard listener == nil, let nwPort = NWEndpoint.Port(rawValue: port) else { return }
-        let listener = try NWListener(using: .tcp, on: nwPort)
-        let deviceName = Host.current().localizedName ?? "Presentation Mode"
-        let deviceID = Self.deviceID
-        listener.service = NWListener.Service(
-            name: deviceName,
-            type: "_presentation-mode._tcp",
-            txtRecord: NWTXTRecord(["id": deviceID, "api": "1"])
-        )
+        // Production restores the existing 0.4.3 LAN service; validation stays local.
+        let parameters = NWParameters.tcp
+        if BuildPolicy.companionLoopbackOnly {
+            parameters.requiredLocalEndpoint = .hostPort(host: .ipv4(.loopback), port: nwPort)
+        }
+        let listener = try NWListener(using: parameters, on: nwPort)
+        if BuildPolicy.advertiseCompanion {
+            listener.service = NWListener.Service(
+                name: Host.current().localizedName ?? "Presentation Mode",
+                type: "_presentation-mode._tcp",
+                txtRecord: NWTXTRecord(["id": Self.deviceID, "api": "1"])
+            )
+        }
         listener.newConnectionHandler = { [weak self] connection in self?.accept(connection) }
         listener.stateUpdateHandler = { state in
             if case .failed(let error) = state { fputs("Companion API failed: \(error)\n", stderr) }

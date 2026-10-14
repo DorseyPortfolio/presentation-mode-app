@@ -81,7 +81,8 @@ int32_t pm_ndi_sender_send_pixel_buffer(PMNDISender* sender, void* opaquePixelBu
     NDIlib_video_frame_v2_t frame{};
     frame.xres = static_cast<int>(CVPixelBufferGetWidth(pixelBuffer));
     frame.yres = static_cast<int>(CVPixelBufferGetHeight(pixelBuffer));
-    frame.FourCC = NDIlib_FourCC_type_BGRA;
+    // Full desktop is opaque; ignore capture alpha without modifying its buffer.
+    frame.FourCC = NDIlib_FourCC_type_BGRX;
     frame.frame_rate_N = 60000;
     frame.frame_rate_D = 1001;
     frame.picture_aspect_ratio = 16.0f / 9.0f;

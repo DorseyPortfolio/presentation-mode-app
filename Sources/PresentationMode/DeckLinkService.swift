@@ -7,15 +7,23 @@ import Foundation
 struct DeckLinkOutput: Identifiable, Equatable {
     let id: String
     let name: String
-    let supports1080p5994: Bool
+    let capability: OutputCapability
+    var supports1080p5994: Bool { capability.modes & OutputTiming.p5994.mask != 0 }
 }
 
 /// DeckLink is intentionally isolated here so the controller and capture pipeline
 /// remain testable without Blackmagic hardware. The production implementation will
 /// bind this service to the Blackmagic Desktop Video SDK.
-final class DeckLinkService {
+// UI discovery state is main-thread owned; frame submission uses the native mutex.
+final class DeckLinkService: @unchecked Sendable {
     private(set) var outputs: [DeckLinkOutput] = []
-    private(set) var isRunning = false
+    private(set) var inventory = HardwareInventory()
+    var isRunning: Bool { state.code > 0 }
+    var state: (code: Int32, message: String) {
+        var buffer = Array<CChar>(repeating: 0, count: 1024)
+        let code = pm_decklink_session_status(session, &buffer, buffer.count)
+        return (code, Self.decodeError(buffer))
+    }
     private let session = pm_decklink_session_create()
 
     deinit {
@@ -26,150 +34,120 @@ final class DeckLinkService {
         if outputs.isEmpty {
             return "No active playback-capable DeckLink outputs were found. Check Desktop Video Setup and the card profile."
         }
-        let unsupported = outputs.filter { !$0.supports1080p5994 }
-        if !unsupported.isEmpty {
-            return "Some DeckLink endpoints do not support 1080p59.94 BGRA in the current profile."
-        }
         return nil
     }
 
     func discover() {
-        let count = pm_decklink_discover(nil, 0)
-        guard count > 0 else {
-            outputs = []
-            return
+        // A bounded retry handles device-count changes between count and copy.
+        // A failed rescan clears availability, but never edits saved assignments.
+        var records: [PMDeckLinkDeviceInfo] = []
+        var complete = false
+        for _ in 0..<3 {
+            let count = pm_decklink_discover(nil, 0)
+            guard count >= 0 else { break }
+            if count == 0 { complete = true; break }
+            var buffer = Array(repeating: PMDeckLinkDeviceInfo(), count: Int(count))
+            let found = buffer.withUnsafeMutableBufferPointer { pm_decklink_discover($0.baseAddress, count) }
+            if found >= 0 && found <= count { records = Array(buffer.prefix(Int(found))); complete = true; break }
         }
-
-        var records = Array(repeating: PMDeckLinkDeviceInfo(), count: Int(count))
-        let discovered = records.withUnsafeMutableBufferPointer { buffer in
-            pm_decklink_discover(buffer.baseAddress, count)
+        guard complete else {
+            inventory = HardwareInventory(issues: ["DeckLink discovery failed or devices changed during rescan. Refresh devices."])
+            outputs = []; return
         }
-        guard discovered >= 0 else {
-            outputs = []
-            return
-        }
-
-        let discoveredOutputs = records.prefix(Int(min(discovered, count))).compactMap { record -> DeckLinkOutput? in
-            guard record.supports_playback, record.is_active else { return nil }
-            let name = withUnsafePointer(to: record.display_name) { pointer in
-                pointer.withMemoryRebound(to: CChar.self, capacity: 256) {
-                    String(cString: $0)
-                }
+        func text<T>(_ value: T) -> String {
+            withUnsafePointer(to: value) { pointer in
+                pointer.withMemoryRebound(to: CChar.self, capacity: MemoryLayout<T>.size) { String(cString: $0) }
             }
-            let stableID = String(format: "%016llx:%lld", record.persistent_id, record.subdevice_index)
-            return DeckLinkOutput(
-                id: stableID,
-                name: name.isEmpty ? "DeckLink output" : name,
-                supports1080p5994: record.supports_1080p5994_bgra
-            )
         }
-
-        let nameCounts = Dictionary(grouping: discoveredOutputs, by: \.name).mapValues(\.count)
-        var duplicateIndexes: [String: Int] = [:]
-        outputs = discoveredOutputs.sorted { $0.id < $1.id }.map { output in
-            guard nameCounts[output.name, default: 0] > 1 else { return output }
-            let index = duplicateIndexes[output.name, default: 0]
-            duplicateIndexes[output.name] = index + 1
-            let suffix = String(UnicodeScalar(65 + index)!)
-            return DeckLinkOutput(
-                id: output.id,
-                name: "\(output.name) — Card \(suffix)",
-                supports1080p5994: output.supports1080p5994
-            )
+        var endpoints: [HardwareEndpoint] = []
+        for record in records {
+            let id = String(format: "%016llx:%lld", record.persistent_id, record.subdevice_index)
+            var modes: [HardwareMode] = []
+            var issue: String?
+            if record.is_active && record.supports_playback {
+                var copied = false
+                for _ in 0..<3 {
+                    let count = id.withCString { pm_decklink_output_modes($0, nil, 0) }
+                    guard count >= 0 else { break }
+                    if count == 0 { copied = true; break }
+                    var buffer = Array(repeating: PMDeckLinkModeInfo(), count: Int(count))
+                    let found = id.withCString { outputID in
+                        buffer.withUnsafeMutableBufferPointer { pm_decklink_output_modes(outputID, $0.baseAddress, count) }
+                    }
+                    if found >= 0 && found <= count {
+                        modes = buffer.prefix(Int(found)).map { mode in
+                            HardwareMode(id: mode.mode_id, name: text(mode.name), width: Int(mode.width), height: Int(mode.height), frameDuration: mode.frame_duration, timeScale: mode.time_scale, progressive: mode.progressive, bgra: mode.supports_bgra, yuv: mode.supports_yuv)
+                        }
+                        copied = true; break
+                    }
+                }
+                if !copied { issue = "Mode discovery failed; refresh devices." }
+            }
+            let name = text(record.display_name)
+            endpoints.append(HardwareEndpoint(id: id, connectorIndex: record.subdevice_index,
+                connectorLabel: name.isEmpty ? "DeckLink output \(record.subdevice_index)" : name,
+                modelLabel: text(record.model_name), physicalGroup: record.has_physical_group ? record.physical_group : nil,
+                active: record.is_active, playback: record.supports_playback, synchronized: record.supports_sync_group,
+                modes: modes, discoveryIssue: issue))
         }
-
-        for output in outputs {
-            print("DeckLink: \(output.name) [\(output.id)] 1080p59.94 BGRA=\(output.supports1080p5994)")
+        let duplicates = Dictionary(grouping: endpoints, by: \.id).filter { $0.value.count > 1 }
+        if !duplicates.isEmpty {
+            inventory = HardwareInventory(issues: ["DeckLink returned duplicate endpoint identities; assignments are blocked until a clean rescan."])
+            outputs = []; return
+        }
+        inventory = HardwareInventory(endpoints: endpoints)
+        outputs = inventory.cards.flatMap { card in
+            card.outputs.filter(\.selectable).map { endpoint in
+                DeckLinkOutput(id: endpoint.id, name: "\(card.label) / \(endpoint.connectorLabel)", capability: endpoint.capability)
+            }
         }
     }
 
-    func start(outputIDs: Set<String>, standard: String) throws {
-        guard !outputs.isEmpty else { throw DeckLinkError.runtimeUnavailable }
-        guard !outputIDs.isEmpty else { throw DeckLinkError.noOutputsSelected }
-        guard standard == "1080p59.94" else { throw DeckLinkError.unsupportedStandard(standard) }
-
-        let selected = outputIDs.sorted()
-        let allocatedStrings = selected.map { strdup($0) }
-        let cStrings: [UnsafePointer<CChar>?] = allocatedStrings.map { pointer in
-            pointer.map { UnsafePointer($0) }
+    func configure(_ profile: RoomProfile, validateDevices: Bool = true) throws {
+        let problems = profile.problems(devices: validateDevices ? outputs.map(\.capability) : nil)
+        guard problems.isEmpty else { throw ProfileError.invalid(problems.joined(separator: "\n")) }
+        var strings: [UnsafeMutablePointer<CChar>] = []
+        defer { strings.forEach { free($0) } }
+        func owned(_ text: String) -> UnsafePointer<CChar> {
+            let pointer = strdup(text)!
+            strings.append(pointer); return UnsafePointer(pointer)
         }
-        defer { allocatedStrings.forEach { free($0) } }
-        var errorBuffer = Array<CChar>(repeating: 0, count: 512)
-        let result = cStrings.withUnsafeBufferPointer { ids in
-            errorBuffer.withUnsafeMutableBufferPointer { error in
-                pm_decklink_session_start(
-                    session,
-                    ids.baseAddress,
-                    Int32(ids.count),
-                    error.baseAddress,
-                    error.count
-                )
+        var routes: [PMDeckLinkRoute] = []
+        for (group, d) in profile.destinations.enumerated() {
+            routes.append(PMDeckLinkRoute(id: owned(d.picture), label: owned(d.name + " picture"), group: Int32(group), key: false, duration: d.timing.duration))
+            if let key = d.key {
+                routes.append(PMDeckLinkRoute(id: owned(key), label: owned(d.name + " key"), group: Int32(group), key: true, duration: d.timing.duration))
             }
         }
-        guard result == 0 else {
-            throw DeckLinkError.playbackFailure(Self.decodeError(errorBuffer))
-        }
-        isRunning = true
+        var error = Array<CChar>(repeating: 0, count: 1024)
+        let result = routes.withUnsafeBufferPointer { pm_decklink_session_configure(session, $0.baseAddress, $0.count, &error, error.count) }
+        guard result == 0 else { throw ProfileError.invalid(Self.decodeError(error)) }
+    }
+
+    func start() throws {
+        var errorBuffer = Array<CChar>(repeating: 0, count: 1024)
+        let result = pm_decklink_session_start(session, &errorBuffer, errorBuffer.count)
+        guard result == 0 else { throw DeckLinkError.playbackFailure(Self.decodeError(errorBuffer)) }
     }
 
     func enqueue(_ sampleBuffer: CMSampleBuffer) {
-        guard isRunning, let pixelBuffer = CMSampleBufferGetImageBuffer(sampleBuffer) else { return }
-        guard Self.forceOpaqueAlpha(pixelBuffer) else {
-            fputs("DeckLink playback error: captured frame is not writable 32-bit BGRA.\n", stderr)
-            return
-        }
-        var errorBuffer = Array<CChar>(repeating: 0, count: 512)
-        let result = errorBuffer.withUnsafeMutableBufferPointer { error in
-            pm_decklink_session_enqueue_pixel_buffer(
-                session,
-                Unmanaged.passUnretained(pixelBuffer).toOpaque(),
-                error.baseAddress,
-                error.count
-            )
-        }
-        if result < 0 {
-            let message = Self.decodeError(errorBuffer)
-            fputs("DeckLink playback error: \(message)\n", stderr)
-        }
+        guard let pixelBuffer = CMSampleBufferGetImageBuffer(sampleBuffer) else { return }
+        var errorBuffer = Array<CChar>(repeating: 0, count: 1024)
+        let result = pm_decklink_session_enqueue_pixel_buffer(session,
+            Unmanaged.passUnretained(pixelBuffer).toOpaque(), &errorBuffer, errorBuffer.count)
+        if result < 0 { fputs("DeckLink frame rejected: \(Self.decodeError(errorBuffer))\n", stderr) }
     }
 
-    func stop() {
-        pm_decklink_session_stop(session)
-        isRunning = false
+    @discardableResult
+    func stop() -> String? {
+        var errorBuffer = Array<CChar>(repeating: 0, count: 1024)
+        let result = pm_decklink_session_stop(session, &errorBuffer, errorBuffer.count)
+        return result < 0 ? Self.decodeError(errorBuffer) : nil
     }
 
     private static func decodeError(_ buffer: [CChar]) -> String {
         let bytes = buffer.prefix { $0 != 0 }.map { UInt8(bitPattern: $0) }
         return String(decoding: bytes, as: UTF8.self)
-    }
-
-    /// ScreenCaptureKit supplies BGRA. DeckLink and downstream keyers may
-    /// preserve its fourth byte, so make the presentation desktop explicitly
-    /// opaque before scheduling it. For BGRA memory order, vImage's channel
-    /// mask bit 0x1 addresses the fourth (alpha) byte.
-    private static func forceOpaqueAlpha(_ pixelBuffer: CVPixelBuffer) -> Bool {
-        guard CVPixelBufferGetPixelFormatType(pixelBuffer) == kCVPixelFormatType_32BGRA,
-              CVPixelBufferLockBaseAddress(pixelBuffer, []) == kCVReturnSuccess,
-              let baseAddress = CVPixelBufferGetBaseAddress(pixelBuffer) else {
-            return false
-        }
-        defer { CVPixelBufferUnlockBaseAddress(pixelBuffer, []) }
-
-        let image = vImage_Buffer(
-            data: baseAddress,
-            height: vImagePixelCount(CVPixelBufferGetHeight(pixelBuffer)),
-            width: vImagePixelCount(CVPixelBufferGetWidth(pixelBuffer)),
-            rowBytes: CVPixelBufferGetBytesPerRow(pixelBuffer)
-        )
-        var source = image
-        var destination = image
-        return vImageOverwriteChannelsWithScalar_ARGB8888(
-            255,
-            &source,
-            &destination,
-            0x1,
-            vImage_Flags(kvImageNoFlags)
-        ) == kvImageNoError
     }
 
     enum DeckLinkError: LocalizedError {

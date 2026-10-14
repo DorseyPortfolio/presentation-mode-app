@@ -1,7 +1,8 @@
 import CoreMedia
 import NDIBridge
 
-final class NDIService {
+// Lifecycle/UI fields stay on the main actor; send touches only the native locked sender.
+final class NDIService: @unchecked Sendable {
     private let sender = pm_ndi_sender_create()
     private(set) var isRunning = false
     private(set) var sourceName = ""
@@ -31,12 +32,12 @@ final class NDIService {
     }
 
     func send(_ sampleBuffer: CMSampleBuffer) {
-        guard isRunning, let pixelBuffer = CMSampleBufferGetImageBuffer(sampleBuffer) else { return }
+        guard let pixelBuffer = CMSampleBufferGetImageBuffer(sampleBuffer) else { return }
         var error = Array<CChar>(repeating: 0, count: 512)
         let result = error.withUnsafeMutableBufferPointer {
             pm_ndi_sender_send_pixel_buffer(sender, Unmanaged.passUnretained(pixelBuffer).toOpaque(), $0.baseAddress, $0.count)
         }
-        if result < 0 { fputs("NDI output error: \(Self.decode(error))\n", stderr) }
+        if result < 0 && result != -2 { fputs("NDI output error: \(Self.decode(error))\n", stderr) }
     }
 
     func stop() {

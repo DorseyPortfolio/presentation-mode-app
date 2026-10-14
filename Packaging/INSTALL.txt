@@ -1,32 +1,36 @@
-PRESENTATION MODE — INSTALLATION
+PRESENTATION MODE SETTINGS PREVIEW — 0.5.0 / BUILD 12
+
+Status
+This source publication does not include a new release or authorize installation.
+Build 12 is installed on Pro1; its physical three-screen verification is pending.
+Four-card operation has offline coverage only.
 
 Requirements
-• Apple silicon Mac (M1 or newer)
-• macOS 14 Sonoma or newer
-• Blackmagic Desktop Video 15.3.1 or newer installed for DeckLink output
+• Apple silicon Mac, macOS 14 or newer.
+• Compatible DeckLink hardware and Blackmagic Desktop Video for SDI output.
+• Extended display/HDMI EDID emulator and Screen Recording permission.
+• Playback is progressive 1920×1080 at supported 23.98/24/25/29.97/30/50/59.94/60 timings.
 
-Install
-1. Drag Presentation Mode to the Applications folder.
-2. Open Applications, Control-click Presentation Mode, and choose Open.
-3. Click Open in the macOS confirmation dialog.
-4. Allow Local Network access when prompted.
-5. Enable Presentation Mode in:
-   System Settings > Privacy & Security > Screen & System Audio Recording
-6. Quit and reopen Presentation Mode after granting screen-recording access.
-7. Select the active DeckLink outputs exposed by this Mac's existing card profile.
-8. If this Mac uses NDI, enable NDI output and enter the exact sender name used
-   by ProPresenter. If it does not use NDI, leave NDI output disabled.
-
-Optional startup setup
-Add Presentation Mode under:
-System Settings > General > Login Items & Extensions > Open at Login
+For a separately authorized installation or test
+1. Build with: sh Packaging/build-app.sh
+2. Use the resulting "Presentation Mode Settings Preview.app". Preserve any
+   accepted installation and its preferences before replacing it.
+3. Open the app normally. It starts in Production Mode with outputs stopped.
+4. Grant Screen Recording access to this app, then quit and reopen it.
+5. Select the extended Canva display in Controls.
+6. Review the actual Outputs in Setup. Choose Direct or Fill + Key, select an
+   eligible Key on the same card, and choose a common supported timing.
+7. Apply while outputs are stopped. Apply saves without starting playback.
+8. In the agreed hardware test, Canva Mode starts outputs; Production Mode
+   stops them and releases DeckLink for ProPresenter. No arming command is needed.
 
 Notes
-• The app appears in the menu bar rather than the Dock.
-• Presentation Mode listens for Bitfocus Companion on TCP port 9876.
-• If Companion runs on this Mac, connect it to 127.0.0.1:9876.
-• NDI is optional and saved separately on each Mac. New installations default
-  the sender name to “<Mac name> - NDI 1”.
-• The app does not change the DeckLink card profile or connector mapping.
-• This local installer is ad-hoc signed, not Apple-notarized. The Control-click
-  Open step is normally needed only the first time.
+• Bundle ID: com.wcmedia.PresentationMode.SettingsPreview.
+• Ad-hoc signed by default; rebuilds may require Screen Recording access again.
+• Companion is off by default. Explicit environment opt-in binds to loopback
+  TCP 19876 only, without Bonjour. The production 9876 policy is separate.
+• NDI is optional and defaults off for new preview configurations; review the
+  saved sender name before enabling it.
+• The default profile preserves Largo assignments; review it for another room.
+• No Desktop Video profile change or automatic login item is added.
+• See README.md and PUBLICATION-VERIFICATION.md for current limits and evidence.
