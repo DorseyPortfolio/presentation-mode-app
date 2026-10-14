@@ -186,7 +186,7 @@ final class AppController: NSObject {
         let tabs = NSTabView(frame: NSRect(x: 0, y: 0, width: 960, height: 790))
         let controlTab = NSTabViewItem(identifier: "controls"); controlTab.label = "Controls"; controlTab.view = controls
         let setupTab = NSTabViewItem(identifier: "setup"); setupTab.label = "Setup"
-        setupTab.view = SetupView(loadDiagnostic: { [unowned self] in self.profileLoadError }, saved: { [unowned self] in self.profiles }, devices: { [unowned self] in self.deckLinkService.outputs.map(\.capability) }, stopped: { [unowned self] in self.outputsStopped }, refresh: { [unowned self] in self.deckLinkService.discover() }, apply: { [unowned self] library in try self.applyProfiles(library) })
+        setupTab.view = SetupView(loadDiagnostic: { [unowned self] in self.profileLoadError }, saved: { [unowned self] in self.profiles }, inventory: { [unowned self] in self.deckLinkService.inventory }, stopped: { [unowned self] in self.outputsStopped }, refresh: { [unowned self] in self.deckLinkService.discover() }, apply: { [unowned self] library in try self.applyProfiles(library) })
         tabs.addTabViewItem(controlTab); tabs.addTabViewItem(setupTab); tabs.selectTabViewItem(at: 0)
         window.contentView = tabs
         NSLayoutConstraint.activate([

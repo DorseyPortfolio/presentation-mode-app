@@ -38,7 +38,7 @@ final class MemoryDefaults: UserDefaults {
         defaults.set(Data("broken".utf8), forKey: "roomProfiles.v1")
         do { _ = try store.load(); assertionFailure("corrupt profile silently accepted") } catch {}
         assert(defaults.data(forKey: "roomProfiles.v1") == Data("broken".utf8))
-        assert(OutputTiming.allCases.map(\.duration) == [2502,2500,2400,2002,2000,1200,1001,1000])
+        assert(OutputTiming.allCases.map(\.duration) == [5005,5000,4800,4004,4000,2400,2002,2000])
         print("PASS: Largo migration, direct/pair validation, collisions, unsupported modes/cards, versioned persistence and corrupt-data preservation")
     }
 }

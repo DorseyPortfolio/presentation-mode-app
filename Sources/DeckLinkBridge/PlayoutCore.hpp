@@ -7,12 +7,12 @@
 #include <set>
 
 namespace pm {
-constexpr int64_t scale = 60000;
+constexpr int64_t scale = 120000;
 constexpr unsigned queueLimit = 3;
 enum class Content { picture, whiteKey, blackKey };
 struct Route { std::string id; std::string label; int group; bool key; int64_t duration; };
 inline bool validDuration(int64_t d) {
-    return d==2502 || d==2500 || d==2400 || d==2002 || d==2000 || d==1200 || d==1001 || d==1000;
+    return d==5005 || d==5000 || d==4800 || d==4004 || d==4000 || d==2400 || d==2002 || d==2000;
 }
 inline std::string validateRoutes(const std::vector<Route>& routes) {
     if(routes.empty() || routes.size()>32) return "Choose between 1 and 32 endpoints";

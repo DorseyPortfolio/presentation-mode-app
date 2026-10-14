@@ -1,13 +1,16 @@
-# Current Setup notes
+# Current hardware-first Setup notes
 
-- “Changes stay in this draft until you Apply with all outputs stopped.” Editing never automatically changes the applied profile.
-- “Select Direct for an ordinary picture output, or Fill + Key for a synchronized pair.” Direct uses one endpoint; a pair uses a picture and a matching key endpoint.
-- “Opaque desktop: picture alpha is solid. Paired key is white while active, black on stop.” Desktop content is fully opaque; the separate key enables/disables it downstream.
-- “Direct destinations send picture only.” No separate key endpoint is used.
-- “Destination names and assignments belong to the selected room profile.” Side Screens, LED Wall and Confidence are editable Largo data, not fixed UI slots.
-- “Draft only. 8 active playback endpoints found. Apply rechecks device support.” The count comes from device discovery; Apply validates again before saving.
-- “Draft valid. 8 active endpoints. Hardware availability is checked again at start. Changes are not applied.” Validation alone does not save or start output; start checks hardware again.
-- “Applied and saved. Outputs remain stopped.” Apply saves the profile without starting it.
-- “Draft reverted to the last applied profile.” Revert discards unsaved edits.
+The Setup page has one sidebar group, **Outputs**. Rows use detected SDK output names, not saved Side/LED/Confidence destination names. Selecting an output shows Direct / Fill + Key and supported timing controls on the right.
 
-New room starts empty; Duplicate room copies an existing profile. Add destination creates an unassigned Direct destination. Each destination supports rename/remove, picture device, optional key, and supported 1080p timing. The Controls tab shows only “Room profile loaded” and the actual applied profile name, or “No room profile loaded” with a Setup prompt. Load errors appear in Setup.
+- “Draft changes • Apply with outputs stopped”: edits are drafts until Apply; no output is started by saving.
+- “Direct”: one picture output, without a separate key.
+- “Fill + Key”: the selected output is Fill; choose Key from eligible unused outputs on the same synchronization-capable card. The Timing menu contains only common modes supported by both outputs and the app.
+- “Key source for [fill output name]”: this output belongs to the displayed fill. Its sidebar row is disabled for independent editing. Set its fill to Direct or remove that assignment to release it in the draft.
+- “Not configured”: detected output not currently assigned in the profile. Configure output adds it; Remove assignment releases its picture/key assignment.
+- “Fill: … ↳ Key: …”: shows the pairing relationship explicitly.
+- “Rescan”: rereads cards, outputs and modes without changing saved assignments or hardware settings.
+- “Draft valid. Not applied.”: validation passed, but the changes are still drafts.
+- “Applied and saved. Outputs remain stopped.”: profile saved without starting playback.
+- “Draft reverted to the last applied profile.”: unsaved edits discarded.
+
+New room starts without assignments; Duplicate preserves existing assignments in a new room draft. Controls remains “Room profile loaded” with the applied name. The opaque-desktop policy is unchanged: solid picture alpha, white active key, black on stop. Hardware-supported modes outside the app's progressive1920×1080 pipeline are inventoried but are not selectable for playback.

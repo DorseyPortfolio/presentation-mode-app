@@ -17,6 +17,7 @@ struct DeckLinkOutput: Identifiable, Equatable {
 // UI discovery state is main-thread owned; frame submission uses the native mutex.
 final class DeckLinkService: @unchecked Sendable {
     private(set) var outputs: [DeckLinkOutput] = []
+    private(set) var inventory = HardwareInventory()
     var isRunning: Bool { state.code > 0 }
     var state: (code: Int32, message: String) {
         var buffer = Array<CChar>(repeating: 0, count: 1024)
@@ -37,52 +38,68 @@ final class DeckLinkService: @unchecked Sendable {
     }
 
     func discover() {
-        let count = pm_decklink_discover(nil, 0)
-        guard count > 0 else {
-            outputs = []
-            return
+        // A bounded retry handles device-count changes between count and copy.
+        // A failed rescan clears availability, but never edits saved assignments.
+        var records: [PMDeckLinkDeviceInfo] = []
+        var complete = false
+        for _ in 0..<3 {
+            let count = pm_decklink_discover(nil, 0)
+            guard count >= 0 else { break }
+            if count == 0 { complete = true; break }
+            var buffer = Array(repeating: PMDeckLinkDeviceInfo(), count: Int(count))
+            let found = buffer.withUnsafeMutableBufferPointer { pm_decklink_discover($0.baseAddress, count) }
+            if found >= 0 && found <= count { records = Array(buffer.prefix(Int(found))); complete = true; break }
         }
-
-        var records = Array(repeating: PMDeckLinkDeviceInfo(), count: Int(count))
-        let discovered = records.withUnsafeMutableBufferPointer { buffer in
-            pm_decklink_discover(buffer.baseAddress, count)
+        guard complete else {
+            inventory = HardwareInventory(issues: ["DeckLink discovery failed or devices changed during rescan. Refresh devices."])
+            outputs = []; return
         }
-        guard discovered >= 0 else {
-            outputs = []
-            return
-        }
-
-        let discoveredOutputs = records.prefix(Int(min(discovered, count))).compactMap { record -> DeckLinkOutput? in
-            guard record.supports_playback, record.is_active else { return nil }
-            let name = withUnsafePointer(to: record.display_name) { pointer in
-                pointer.withMemoryRebound(to: CChar.self, capacity: 256) {
-                    String(cString: $0)
-                }
+        func text<T>(_ value: T) -> String {
+            withUnsafePointer(to: value) { pointer in
+                pointer.withMemoryRebound(to: CChar.self, capacity: MemoryLayout<T>.size) { String(cString: $0) }
             }
-            let stableID = String(format: "%016llx:%lld", record.persistent_id, record.subdevice_index)
-            return DeckLinkOutput(
-                id: stableID,
-                name: name.isEmpty ? "DeckLink output" : name,
-                capability: OutputCapability(id: stableID, name: name, modes: record.mode_mask, physicalGroup: record.has_physical_group ? record.physical_group : nil, synchronized: record.supports_sync_group)
-            )
         }
-
-        let nameCounts = Dictionary(grouping: discoveredOutputs, by: \.name).mapValues(\.count)
-        var duplicateIndexes: [String: Int] = [:]
-        outputs = discoveredOutputs.sorted { $0.id < $1.id }.map { output in
-            guard nameCounts[output.name, default: 0] > 1 else { return output }
-            let index = duplicateIndexes[output.name, default: 0]
-            duplicateIndexes[output.name] = index + 1
-            let suffix = String(UnicodeScalar(65 + index)!)
-            return DeckLinkOutput(
-                id: output.id,
-                name: "\(output.name) — Card \(suffix)",
-                capability: output.capability
-            )
+        var endpoints: [HardwareEndpoint] = []
+        for record in records {
+            let id = String(format: "%016llx:%lld", record.persistent_id, record.subdevice_index)
+            var modes: [HardwareMode] = []
+            var issue: String?
+            if record.is_active && record.supports_playback {
+                var copied = false
+                for _ in 0..<3 {
+                    let count = id.withCString { pm_decklink_output_modes($0, nil, 0) }
+                    guard count >= 0 else { break }
+                    if count == 0 { copied = true; break }
+                    var buffer = Array(repeating: PMDeckLinkModeInfo(), count: Int(count))
+                    let found = id.withCString { outputID in
+                        buffer.withUnsafeMutableBufferPointer { pm_decklink_output_modes(outputID, $0.baseAddress, count) }
+                    }
+                    if found >= 0 && found <= count {
+                        modes = buffer.prefix(Int(found)).map { mode in
+                            HardwareMode(id: mode.mode_id, name: text(mode.name), width: Int(mode.width), height: Int(mode.height), frameDuration: mode.frame_duration, timeScale: mode.time_scale, progressive: mode.progressive, bgra: mode.supports_bgra, yuv: mode.supports_yuv)
+                        }
+                        copied = true; break
+                    }
+                }
+                if !copied { issue = "Mode discovery failed; refresh devices." }
+            }
+            let name = text(record.display_name)
+            endpoints.append(HardwareEndpoint(id: id, connectorIndex: record.subdevice_index,
+                connectorLabel: name.isEmpty ? "DeckLink output \(record.subdevice_index)" : name,
+                modelLabel: text(record.model_name), physicalGroup: record.has_physical_group ? record.physical_group : nil,
+                active: record.is_active, playback: record.supports_playback, synchronized: record.supports_sync_group,
+                modes: modes, discoveryIssue: issue))
         }
-
-        for output in outputs {
-            print("DeckLink: \(output.name) [\(output.id)] 1080p59.94 BGRA=\(output.supports1080p5994)")
+        let duplicates = Dictionary(grouping: endpoints, by: \.id).filter { $0.value.count > 1 }
+        if !duplicates.isEmpty {
+            inventory = HardwareInventory(issues: ["DeckLink returned duplicate endpoint identities; assignments are blocked until a clean rescan."])
+            outputs = []; return
+        }
+        inventory = HardwareInventory(endpoints: endpoints)
+        outputs = inventory.cards.flatMap { card in
+            card.outputs.filter(\.selectable).map { endpoint in
+                DeckLinkOutput(id: endpoint.id, name: "\(card.label) / \(endpoint.connectorLabel)", capability: endpoint.capability)
+            }
         }
     }
 

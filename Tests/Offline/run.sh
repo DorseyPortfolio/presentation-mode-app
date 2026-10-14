@@ -13,3 +13,5 @@ swiftc -D PRESENTATION_MODE_PRODUCTION -module-cache-path .build/module-cache So
 
 swiftc -module-cache-path .build/module-cache Sources/PresentationMode/RoomProfiles.swift Tests/Offline/RoomProfileTests.swift -o .build/offline/room-profile-tests
 .build/offline/room-profile-tests
+swiftc -module-cache-path .build/module-cache Sources/PresentationMode/RoomProfiles.swift Sources/PresentationMode/HardwareSetup.swift Tests/Offline/HardwareSetupTests.swift -o .build/offline/hardware-setup-tests
+.build/offline/hardware-setup-tests

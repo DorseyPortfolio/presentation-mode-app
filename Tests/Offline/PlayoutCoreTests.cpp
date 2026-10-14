@@ -40,10 +40,11 @@ void verifyCleanup(const Fake& f) {
 }
 int main() {
     int checks=0;
-    { std::set<std::string> ids; for(const auto& r:routes()) ids.insert(r.id);assert(ids.size()==5);assert(!routes()[4].key && routes()[4].duration==1001); ++checks; }
+    assert(scale==120000 && scale*1001==5005*24000); // Exact 23.976, no rounded frame duration.
+    { std::set<std::string> ids; for(const auto& r:routes()) ids.insert(r.id);assert(ids.size()==5);assert(!routes()[4].key && routes()[4].duration==2002); ++checks; }
     { uint8_t input[]={2,4,8,0,3,5,7,128,99,99,99,99};uint8_t copy[12]={};opaqueCopy(input,12,copy,12,2,1);assert(copy[0]==2 && copy[3]==255 && copy[7]==255 && input[3]==0 && input[7]==128 && copy[8]==0);solid(copy,12,2,1,true);assert(copy[0]==255 && copy[7]==255 && copy[8]==0);solid(copy,12,2,1,false);assert(copy[0]==0 && copy[3]==255 && copy[4]==0);++checks; }
-    { Fake f;Scheduler s{routes()};assert(s.tick(f));assert(f.frames.size()==15);assert(f.prepared[1]==Content::whiteKey && f.prepared[3]==Content::whiteKey && f.prepared[4]==Content::picture);assert(s.groups[0].next==3600 && s.groups[1].next==3003 && s.groups[2].next==3003);auto before=f.frames.size();assert(s.tick(f));assert(f.frames.size()==before);++checks; }
-    { Fake f;Scheduler s{routes()};assert(s.tick(f));f.counts={2,3,2,2,2};assert(s.tick(f));assert(s.groups[0].next==3600 && s.groups[1].next==4004);++checks; }
+    { Fake f;Scheduler s{routes()};assert(s.tick(f));assert(f.frames.size()==15);assert(f.prepared[1]==Content::whiteKey && f.prepared[3]==Content::whiteKey && f.prepared[4]==Content::picture);assert(s.groups[0].next==7200 && s.groups[1].next==6006 && s.groups[2].next==6006);auto before=f.frames.size();assert(s.tick(f));assert(f.frames.size()==before);++checks; }
+    { Fake f;Scheduler s{routes()};assert(s.tick(f));f.counts={2,3,2,2,2};assert(s.tick(f));assert(s.groups[0].next==7200 && s.groups[1].next==8008);++checks; }
     { Fake f;Scheduler s{routes()};assert(s.tick(f));f.events.clear();assert(s.shutdown(f));verifyCleanup(f);assert(f.events.front()=="stop0");++checks; }
     for(int operation=0;operation<4;++operation) for(int endpoint=0;endpoint<5;++endpoint) {
         Fake f;Scheduler s{routes()};
@@ -59,7 +60,7 @@ int main() {
     // 10 seconds at 250 scheduler ticks/s; source may remain static for the
     // whole run. 50 and 59.94 groups must refill independently without drift.
     { Fake f;Scheduler s{routes()};assert(s.tick(f));std::array<int64_t,3> consumed{{0,0,0}};
-      for(int64_t now=240;now<=600000;now+=240) {
+      for(int64_t now=480;now<=1200000;now+=480) {
         for(int g=0;g<3;++g) {
           auto due=now/s.groups[g].duration;
           auto n=due-consumed[g];consumed[g]=due;
@@ -76,23 +77,23 @@ int main() {
       ++checks;
     }
     // No Largo indices or group counts in the configurable scheduler.
-    for(auto duration:{2502,2500,2400,2002,2000,1200,1001,1000}) {
+    for(auto duration:{5005,5000,4800,4004,4000,2400,2002,2000}) {
         Fake f; Scheduler s{{{"direct","Screen",0,false,duration}}};
         assert(s.tick(f)); assert(s.groups.size()==1 && f.frames.size()==3);
         assert(s.shutdown(f));
         assert(std::none_of(f.events.begin(),f.events.end(),[](const std::string& e){return e.find("clear")==0;})); ++checks;
     }
-    { Fake f; Scheduler s{{{"a","Direct",0,false,2500},{"b","Fill",1,false,2002},{"c","Key",1,true,2002}}};
+    { Fake f; Scheduler s{{{"a","Direct",0,false,5000},{"b","Fill",1,false,4004},{"c","Key",1,true,4004}}};
       assert(s.tick(f));assert(s.groups.size()==2);assert(f.prepared[2]==Content::whiteKey);
       assert(s.shutdown(f));assert(std::find(f.events.begin(),f.events.end(),"clear2")!=f.events.end());++checks; }
     for(const auto& invalid:std::vector<std::vector<Route>>{
-        {}, {{"a","",0,true,1001}}, {{"a","",0,false,999}},
-        {{"a","",1,false,1001}}, {{"a","",0,false,1001},{"a","",0,true,1001}},
-        {{"a","",0,false,1001},{"b","",0,true,1200}},
-        {{"a","",0,false,1001},{"b","",0,false,1001}}
+        {}, {{"a","",0,true,2002}}, {{"a","",0,false,999}},
+        {{"a","",1,false,2002}}, {{"a","",0,false,2002},{"a","",0,true,2002}},
+        {{"a","",0,false,2002},{"b","",0,true,2400}},
+        {{"a","",0,false,2002},{"b","",0,false,2002}}
     }) {Fake f;Scheduler s{invalid};assert(s.failed && !s.tick(f));assert(f.events.empty());++checks;}
     { std::vector<Route> many;
-      for(int g=0;g<16;++g) many.push_back({"screen"+std::to_string(g),"Direct",g,false,1000});
+      for(int g=0;g<16;++g) many.push_back({"screen"+std::to_string(g),"Direct",g,false,2000});
       Fake f;Scheduler s{many};assert(s.tick(f));assert(s.groups.size()==16 && f.frames.size()==48);
       assert(s.shutdown(f));++checks; }
     std::cout<<"PASS: "<<checks<<" scheduler/pixel cases (including 20 injected failures and 10s mixed-cadence simulation)\n";

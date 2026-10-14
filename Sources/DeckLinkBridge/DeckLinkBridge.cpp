@@ -21,8 +21,8 @@
 #include "PlayoutCore.hpp"
 #include "LargoProfile.hpp"
 
-constexpr BMDTimeValue kFrameDuration = 1001;
-constexpr BMDTimeScale kFrameTimeScale = 60000;
+constexpr BMDTimeValue kFrameDuration = 2002;
+constexpr BMDTimeScale kFrameTimeScale = 120000;
 constexpr uint32_t kMaximumBufferedFrames = 3;
 constexpr int32_t kOutputWidth = 1920;
 constexpr int32_t kOutputHeight = 1080;
@@ -116,10 +116,10 @@ bool supportsOutputFormat(IDeckLinkOutput_v15_3_1* output, BMDPixelFormat pixelF
 
 BMDDisplayMode modeForDuration(int64_t d) {
     switch(d) {
-    case 2502:return bmdModeHD1080p2398; case 2500:return bmdModeHD1080p24;
-    case 2400:return bmdModeHD1080p25; case 2002:return bmdModeHD1080p2997;
-    case 2000:return bmdModeHD1080p30; case 1200:return bmdModeHD1080p50;
-    case 1001:return bmdModeHD1080p5994; case 1000:return bmdModeHD1080p6000;
+    case 5005:return bmdModeHD1080p2398; case 5000:return bmdModeHD1080p24;
+    case 4800:return bmdModeHD1080p25; case 4004:return bmdModeHD1080p2997;
+    case 4000:return bmdModeHD1080p30; case 2400:return bmdModeHD1080p50;
+    case 2002:return bmdModeHD1080p5994; case 2000:return bmdModeHD1080p6000;
     default:return bmdModeUnknown;
     }
 }
@@ -134,6 +134,11 @@ PMDeckLinkDeviceInfo inspectDevice(IDeckLink* device)
         CFRelease(displayName);
     }
 
+    CFStringRef modelName = nullptr;
+    if (device->GetModelName(&modelName) == S_OK && modelName) {
+        copyCFString(modelName, info.model_name, sizeof(info.model_name));
+        CFRelease(modelName);
+    }
     ProfileAttributes attributes(device);
     if (attributes) {
         int64_t value = 0;
@@ -161,7 +166,7 @@ PMDeckLinkDeviceInfo inspectDevice(IDeckLink* device)
             supportsOutputFormat(output, bmdFormat8BitYUV);
         info.supports_1080p50 = supportsOutputFormat(output, bmdFormat8BitBGRA, bmdModeHD1080p50) || supportsOutputFormat(output, bmdFormat8BitYUV, bmdModeHD1080p50);
         attributes.getFlag(BMDDeckLinkSupportsSynchronizeToPlaybackGroup, &info.supports_sync_group);
-        const int64_t durations[]={2502,2500,2400,2002,2000,1200,1001,1000};
+        const int64_t durations[]={5005,5000,4800,4004,4000,2400,2002,2000};
         for(unsigned i=0;i<8;++i) if(supportsOutputFormat(output,bmdFormat8BitBGRA,modeForDuration(durations[i])) || supportsOutputFormat(output,bmdFormat8BitYUV,modeForDuration(durations[i]))) info.mode_mask |= 1u<<i;
         output->Release();
     }
@@ -410,6 +415,46 @@ int32_t pm_decklink_discover(PMDeckLinkDeviceInfo* devices, int32_t capacity)
     }
     iterator->Release();
     return count;
+}
+
+int32_t pm_decklink_output_modes(const char* id, PMDeckLinkModeInfo* records, int32_t capacity) {
+    if(!id || !*id) return -1;
+    auto* iterator=CreateDeckLinkIteratorInstance();
+    if(!iterator) return -1;
+    IDeckLink* device=nullptr;
+    IDeckLinkOutput_v15_3_1* output=nullptr;
+    while(iterator->Next(&device)==S_OK) {
+        if(stableID(device)==id) {
+            auto info=inspectDevice(device);
+            if(info.supports_playback && info.is_active)
+                device->QueryInterface(IID_IDeckLinkOutput_v15_3_1,reinterpret_cast<void**>(&output));
+            device->Release();break;
+        }
+        device->Release();
+    }
+    iterator->Release();
+    if(!output) return -1;
+    IDeckLinkDisplayModeIterator* modes=nullptr;
+    if(output->GetDisplayModeIterator(&modes)!=S_OK || !modes) {output->Release();return -1;}
+    int32_t count=0;
+    IDeckLinkDisplayMode* mode=nullptr;
+    while(modes->Next(&mode)==S_OK) {
+        PMDeckLinkModeInfo info{};
+        info.mode_id=mode->GetDisplayMode();
+        info.width=static_cast<int32_t>(mode->GetWidth());
+        info.height=static_cast<int32_t>(mode->GetHeight());
+        info.progressive=mode->GetFieldDominance()==bmdProgressiveFrame;
+        info.supports_bgra=supportsOutputFormat(output,bmdFormat8BitBGRA,mode->GetDisplayMode());
+        info.supports_yuv=supportsOutputFormat(output,bmdFormat8BitYUV,mode->GetDisplayMode());
+        if(mode->GetFrameRate(&info.frame_duration,&info.time_scale)==S_OK && info.frame_duration>0 && info.time_scale>0 && (info.supports_bgra || info.supports_yuv)) {
+            CFStringRef name=nullptr;
+            if(mode->GetName(&name)==S_OK && name) {copyCFString(name,info.name,sizeof(info.name));CFRelease(name);}
+            if(records && count<std::max<int32_t>(capacity,0)) records[count]=info;
+            ++count;
+        }
+        mode->Release();
+    }
+    modes->Release();output->Release();return count;
 }
 
 PMDeckLinkSession* pm_decklink_session_create(void) { return new PMDeckLinkSession(); }

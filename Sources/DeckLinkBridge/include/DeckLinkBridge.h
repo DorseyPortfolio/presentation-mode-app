@@ -21,12 +21,24 @@ typedef struct PMDeckLinkDeviceInfo {
     bool has_physical_group;
     uint32_t mode_mask;
     char display_name[256];
+    char model_name[256];
 } PMDeckLinkDeviceInfo;
 
 /// Returns the total device count. Copies up to `capacity` records when
 /// `devices` is non-null. A negative result indicates that the runtime could
 /// not create a DeckLink iterator.
 int32_t pm_decklink_discover(PMDeckLinkDeviceInfo* devices, int32_t capacity);
+
+typedef struct PMDeckLinkModeInfo {
+    uint32_t mode_id;
+    int32_t width, height;
+    int64_t frame_duration, time_scale;
+    bool progressive, supports_bgra, supports_yuv;
+    char name[128];
+} PMDeckLinkModeInfo;
+/// Enumerates the selected endpoint's actual SDI modes for BGRA/YUV without
+/// enabling output. Returns total count, or -1 if missing/inactive/unavailable.
+int32_t pm_decklink_output_modes(const char* stable_id, PMDeckLinkModeInfo*, int32_t capacity);
 
 typedef struct PMDeckLinkSession PMDeckLinkSession;
 

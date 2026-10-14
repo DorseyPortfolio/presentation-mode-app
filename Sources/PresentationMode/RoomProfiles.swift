@@ -3,7 +3,7 @@ import Foundation
 enum OutputTiming: String, Codable, CaseIterable {
     case p2398 = "1080p23.98", p24 = "1080p24", p25 = "1080p25", p2997 = "1080p29.97"
     case p30 = "1080p30", p50 = "1080p50", p5994 = "1080p59.94", p60 = "1080p60"
-    var duration: Int64 { [2502,2500,2400,2002,2000,1200,1001,1000][Self.allCases.firstIndex(of: self)!] }
+    var duration: Int64 { [5005,5000,4800,4004,4000,2400,2002,2000][Self.allCases.firstIndex(of: self)!] }
     var mask: UInt32 { 1 << Self.allCases.firstIndex(of: self)! }
 }
 struct OutputCapability: Equatable {
