@@ -1,0 +1,13 @@
+# Final local verification and cleanup
+
+Joseph approved the Settings layout. Code remains at the hardware-first implementation; final source history also records this verification note.
+
+PASS: release build and strict deep signature check;46 scheduler/pixel cases under ASan/UBSan;20 unarmed native lifecycle/reconfiguration runs;2 build-policy checks; profile persistence/migration/corruption validation; four-card inventory/pair-mode/duplicate/rescan tests; exact23.976 frame timing at120000 ticks/s.
+
+PASS stopped-output UI: Direct releases key for reuse; Fill+Key uses selected output as Fill; key list excludes self/occupied/other-card outputs; selected key row disabled and labeled Key source for; pair timing list uses common supported modes; Revert restores saved profile; Apply saves with outputs stopped; final-binary relaunch retains Largo profile and assignments. Preview remains open on Setup. No live output, routing, playback, ProPresenter restart, installed-app change or production-preferences change occurred during these candidate tests.
+
+Read-only actual SDK discovery: two DeckLink8K Pro cards, four logical outputs each,58 SDI BGRA/YUV8 modes per output. Physical four-card operation is simulated offline, not hardware-certified. Driver/card profiles determine which logical outputs are exposed; no automatic profile switching. Hardware modes outside the current1080p progressive pipeline are inventoried but not offered for playback. Same-card synchronization restrictions remain enforced. No continuous hot-plug subscription; Rescan is explicit.
+
+Cleanup authorized after testing: six redundant0.4.3/0.4.4/duplicate0.4.5 app bundles and two generated upstream build directories were moved with macOS FileManager.trashItem to recoverable Trash; nothing permanently deleted. All source/configuration history retained. Ambiguous older imported build folder was left untouched. Installed0.4.5 and currentpreview retained. A verified known-good rollback app and current production preference export are retained privately at continuation/rollback/KNOWN-GOOD-045-build10. Installed and rollback executable SHA256 da22143ab981c38a28c290dd2c649130dc266d3068f278586746bb9bca12e20d. Local cleanup-plan.json/cleanup-results.jsonl record exact originals and Trash targets; these and private preferences/backups are not transferred.
+
+Next: coordinate a maintenance-window hardware-output test with Joseph before replacing accepted0.4.5. Do not arm/start outputs without that scope. No transfer or GitHub push has occurred. Publication must be performed from ProductionMac after local hardware validation/release review as agreed.
