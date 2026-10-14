@@ -19,6 +19,7 @@
 #include <unistd.h>
 #include <cstdlib>
 #include "PlayoutCore.hpp"
+#include "LargoProfile.hpp"
 
 constexpr BMDTimeValue kFrameDuration = 1001;
 constexpr BMDTimeScale kFrameTimeScale = 60000;
@@ -113,6 +114,15 @@ bool supportsOutputFormat(IDeckLinkOutput_v15_3_1* output, BMDPixelFormat pixelF
            supported && actualMode == mode;
 }
 
+BMDDisplayMode modeForDuration(int64_t d) {
+    switch(d) {
+    case 2502:return bmdModeHD1080p2398; case 2500:return bmdModeHD1080p24;
+    case 2400:return bmdModeHD1080p25; case 2002:return bmdModeHD1080p2997;
+    case 2000:return bmdModeHD1080p30; case 1200:return bmdModeHD1080p50;
+    case 1001:return bmdModeHD1080p5994; case 1000:return bmdModeHD1080p6000;
+    default:return bmdModeUnknown;
+    }
+}
 PMDeckLinkDeviceInfo inspectDevice(IDeckLink* device)
 {
     PMDeckLinkDeviceInfo info{};
@@ -133,6 +143,7 @@ PMDeckLinkDeviceInfo inspectDevice(IDeckLink* device)
             info.subdevice_index = value;
         if (attributes.getInt(BMDDeckLinkVideoIOSupport, &value) == S_OK)
             info.supports_playback = (value & bmdDeviceSupportsPlayback) != 0;
+        info.has_physical_group = attributes.getInt(BMDDeckLinkDeviceGroupID, &info.physical_group) == S_OK;
         info.is_active = true;
         if (attributes.getInt(BMDDeckLinkDuplex, &value) == S_OK)
             info.is_active = value != bmdDuplexInactive;
@@ -150,6 +161,8 @@ PMDeckLinkDeviceInfo inspectDevice(IDeckLink* device)
             supportsOutputFormat(output, bmdFormat8BitYUV);
         info.supports_1080p50 = supportsOutputFormat(output, bmdFormat8BitBGRA, bmdModeHD1080p50) || supportsOutputFormat(output, bmdFormat8BitYUV, bmdModeHD1080p50);
         attributes.getFlag(BMDDeckLinkSupportsSynchronizeToPlaybackGroup, &info.supports_sync_group);
+        const int64_t durations[]={2502,2500,2400,2002,2000,1200,1001,1000};
+        for(unsigned i=0;i<8;++i) if(supportsOutputFormat(output,bmdFormat8BitBGRA,modeForDuration(durations[i])) || supportsOutputFormat(output,bmdFormat8BitYUV,modeForDuration(durations[i]))) info.mode_mask |= 1u<<i;
         output->Release();
     }
 
@@ -203,9 +216,10 @@ struct PMDeckLinkSession : pm::Driver {
     std::condition_variable wake;
     bool running=false, terminate=false;
     std::thread worker;
-    std::array<OutputEndpoint,5> endpoints;
-    std::array<bool,3> started{{false,false,false}};
-    pm::Scheduler scheduler;
+    std::vector<pm::Route> routes=pm::routes();
+    std::vector<OutputEndpoint> endpoints=std::vector<OutputEndpoint>(routes.size());
+    std::vector<bool> started=std::vector<bool>(3,false);
+    pm::Scheduler scheduler{routes};
     CVPixelBufferRef latest=nullptr, white=nullptr, black=nullptr;
     IDeckLinkVideoConversion* converter=nullptr;
     std::string lastError;
@@ -278,7 +292,7 @@ struct PMDeckLinkSession : pm::Driver {
         return prepare(i,pm::Content::blackKey) && e.output->DisplayVideoFrameSync(e.prepared)==S_OK;
     }
     void settleClear() override {
-        if(endpoints[1].enabled || endpoints[3].enabled)
+        if(std::any_of(endpoints.begin(),endpoints.end(),[](const OutputEndpoint& e){return e.enabled;}))
             std::this_thread::sleep_for(std::chrono::milliseconds(60));
     }
     bool release(size_t i) override {
@@ -315,7 +329,7 @@ struct PMDeckLinkSession : pm::Driver {
         return false;
     }
     bool initialize() {
-        scheduler=pm::Scheduler{};lastError.clear();
+        scheduler=pm::Scheduler{routes};lastError.clear();
         white=solidBuffer(true);black=solidBuffer(false);
         if(!white || !black) return reject("Cannot allocate solid key frames");
         auto* iterator=CreateDeckLinkIteratorInstance();
@@ -323,27 +337,27 @@ struct PMDeckLinkSession : pm::Driver {
         IDeckLink* device=nullptr;
         while(iterator->Next(&device)==S_OK) {
             auto id=stableID(device);
-            auto r=std::find_if(pm::routes().begin(),pm::routes().end(),[&](const pm::Route& r){return id==r.id;});
-            if(r==pm::routes().end()) {device->Release();continue;}
-            auto i=static_cast<size_t>(r-pm::routes().begin());auto& e=endpoints[i];e.device=device;
+            auto r=std::find_if(routes.begin(),routes.end(),[&](const pm::Route& r){return id==r.id;});
+            if(r==routes.end()) {device->Release();continue;}
+            auto i=static_cast<size_t>(r-routes.begin());auto& e=endpoints[i];e.device=device;
         }
         iterator->Release();
         // Complete all capability checks before enabling any output.
         for(size_t i=0;i<endpoints.size();++i) {
-            auto& e=endpoints[i];const auto& r=pm::routes()[i];
+            auto& e=endpoints[i];const auto& r=routes[i];
             if(!e.device) return reject(std::string("Missing verified endpoint: ")+r.label+" ["+r.id+"]");
             ProfileAttributes attr(e.device);int64_t duplex=bmdDuplexInactive;
             if(!attr || attr.getInt(BMDDeckLinkDuplex,&duplex)!=S_OK || duplex==bmdDuplexInactive)
                 return reject(std::string("Inactive endpoint: ")+r.label);
             if(e.device->QueryInterface(IID_IDeckLinkOutput_v15_3_1,reinterpret_cast<void**>(&e.output))!=S_OK || !e.output)
                 return reject(std::string("No playback interface: ")+r.label);
-            auto mode=r.duration==1200?bmdModeHD1080p50:bmdModeHD1080p5994;
+            auto mode=modeForDuration(r.duration);
             bool bgra=supportsOutputFormat(e.output,bmdFormat8BitBGRA,mode);
             bool yuv=supportsOutputFormat(e.output,bmdFormat8BitYUV,mode);
             e.convertsToYUV=!bgra && yuv;
             if((!bgra && !yuv) || e.output->QueryInterface(IID_IDeckLinkMacOutput,reinterpret_cast<void**>(&e.macOutput))!=S_OK || !e.macOutput)
                 return reject(std::string("Unsupported verified format: ")+r.label);
-            if(r.group<2) {
+            if(scheduler.groups[r.group].indices.size()==2) {
                 bool sync=false;
                 if(attr.getFlag(BMDDeckLinkSupportsSynchronizeToPlaybackGroup,&sync)!=S_OK || !sync ||
                    attr.getInt(BMDDeckLinkDeviceGroupID,&e.physicalGroup)!=S_OK ||
@@ -352,25 +366,26 @@ struct PMDeckLinkSession : pm::Driver {
                     return reject(std::string("Synchronized playback unavailable: ")+r.label);
             }
         }
-        if(endpoints[0].physicalGroup!=endpoints[1].physicalGroup || endpoints[2].physicalGroup!=endpoints[3].physicalGroup)
-            return reject("A verified fill/key pair no longer shares a physical card");
+        for(const auto& group:scheduler.groups)
+            if(group.indices.size()==2 && endpoints[group.indices[0]].physicalGroup!=endpoints[group.indices[1]].physicalGroup)
+                return reject("Fill/key pair must share a physical card");
         if(std::any_of(endpoints.begin(),endpoints.end(),[](const OutputEndpoint& e){return e.convertsToYUV;})) {
             converter=CreateVideoConversionInstance();if(!converter) return reject("Video conversion unavailable");
         }
         // Capture this log during validation: the runtime grouping setting can
         // survive a process crash until reboot. Normal shutdown restores it.
-        for(size_t i=0;i<4;++i)
-            std::fprintf(stderr,"Playback group rollback: %s previous=%lld\n",pm::routes()[i].id,static_cast<long long>(endpoints[i].oldGroup));
+        for(size_t i=0;i<endpoints.size();++i)
+            std::fprintf(stderr,"Playback group rollback: %s previous=%lld\n",routes[i].id.c_str(),static_cast<long long>(endpoints[i].oldGroup));
         std::fflush(stderr);
         for(size_t i=0;i<endpoints.size();++i) {
-            auto& e=endpoints[i];const auto& r=pm::routes()[i];
-            if(r.group<2) {
+            auto& e=endpoints[i];const auto& r=routes[i];
+            if(scheduler.groups[r.group].indices.size()==2) {
                 e.grouped=true; // Restore even after a failed/uncertain SetInt.
                 int64_t group=0x504d00000000LL+(static_cast<int64_t>(getpid())<<8)+r.group;
                 if(e.config->SetInt(bmdDeckLinkConfigPlaybackGroup,group)!=S_OK) return reject("Cannot configure synchronized pair");
             }
-            auto flags=r.group<2?bmdVideoOutputSynchronizeToPlaybackGroup:bmdVideoOutputFlagDefault;
-            auto mode=r.duration==1200?bmdModeHD1080p50:bmdModeHD1080p5994;
+            auto flags=scheduler.groups[r.group].indices.size()==2?bmdVideoOutputSynchronizeToPlaybackGroup:bmdVideoOutputFlagDefault;
+            auto mode=modeForDuration(r.duration);
             if(e.output->EnableVideoOutput(mode,flags)!=S_OK) return reject(std::string("Cannot enable output: ")+r.label);
             e.enabled=true;
             if(r.key && !clear(i)) return reject(std::string("Cannot initialize key to off: ")+r.label);
@@ -399,6 +414,26 @@ int32_t pm_decklink_discover(PMDeckLinkDeviceInfo* devices, int32_t capacity)
 
 PMDeckLinkSession* pm_decklink_session_create(void) { return new PMDeckLinkSession(); }
 void pm_decklink_session_destroy(PMDeckLinkSession* session) { delete session; }
+int32_t pm_decklink_session_configure(PMDeckLinkSession* session,const PMDeckLinkRoute* records,size_t count,char* error,size_t capacity) {
+    if(!session) return -1;
+    std::lock_guard<std::mutex> lock(session->mutex);
+    if(session->running) {writeError(error,capacity,"Stop outputs before applying a profile");return -1;}
+    if(!records || count==0 || count>32) {writeError(error,capacity,"Invalid route count");return -1;}
+    std::vector<pm::Route> routes;
+    for(size_t i=0;i<count;++i) {
+        const auto& r=records[i];
+        if(!r.id || !r.label) {writeError(error,capacity,"Missing route identity");return -1;}
+        routes.push_back({r.id,r.label,r.group,r.key,r.duration});
+    }
+    auto validation=pm::validateRoutes(routes);
+    if(!validation.empty()) {writeError(error,capacity,validation);return -1;}
+    if(!session->stopUnlocked()) {writeError(error,capacity,session->lastError);return -1;}
+    session->routes=routes;
+    session->scheduler=pm::Scheduler{routes};
+    session->endpoints.resize(routes.size());
+    session->started.assign(session->scheduler.groups.size(),false);
+    session->lastError.clear();return 0;
+}
 int32_t pm_decklink_session_start(PMDeckLinkSession* session,char* error,size_t capacity) {
     if(!session) return -1;
     // An isolated candidate cannot drive outputs simply by being opened.

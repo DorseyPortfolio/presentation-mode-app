@@ -4,21 +4,30 @@
 #include <cstdint>
 #include <string>
 #include <vector>
+#include <set>
 
 namespace pm {
 constexpr int64_t scale = 60000;
 constexpr unsigned queueLimit = 3;
 enum class Content { picture, whiteKey, blackKey };
-struct Route { const char* id; const char* label; int group; bool key; int64_t duration; };
-inline const std::array<Route, 5>& routes() {
-    static const std::array<Route, 5> r{{
-        {"00000000254a3ad3:3", "Side fill / Top Card (4)", 0, false, 1200},
-        {"00000000254a3ad1:1", "Side key / Top Card (2)", 0, true, 1200},
-        {"0000000002cf3ad0:0", "LED fill / Bottom Card (1)", 1, false, 1001},
-        {"0000000002cf3ad3:3", "LED key / Bottom Card (4)", 1, true, 1001},
-        {"0000000002cf3ad1:1", "Confidence / Bottom Card (2)", 2, false, 1001}
-    }};
-    return r;
+struct Route { std::string id; std::string label; int group; bool key; int64_t duration; };
+inline bool validDuration(int64_t d) {
+    return d==2502 || d==2500 || d==2400 || d==2002 || d==2000 || d==1200 || d==1001 || d==1000;
+}
+inline std::string validateRoutes(const std::vector<Route>& routes) {
+    if(routes.empty() || routes.size()>32) return "Choose between 1 and 32 endpoints";
+    std::set<std::string> ids;
+    int group=-1; int members=0; int64_t duration=0;
+    for(const auto& r:routes) {
+        if(r.id.empty() || !ids.insert(r.id).second) return "Each endpoint must be assigned only once";
+        if(!validDuration(r.duration)) return "Unsupported 1080p timing";
+        if(r.group==group+1) {
+            if(r.key) return "A destination must begin with a picture output";
+            group=r.group; members=1; duration=r.duration;
+        } else if(r.group==group && members==1 && r.key && r.duration==duration) { ++members; }
+        else return "Destination must contain one picture and an optional matching key";
+    }
+    return {};
 }
 struct Driver {
     virtual ~Driver() = default;
@@ -34,14 +43,24 @@ struct Driver {
 struct Group { std::vector<size_t> indices; int64_t duration; int64_t next = 0; bool started = false; };
 class Scheduler {
 public:
-    std::array<Group,3> groups{{{{0,1},1200},{{2,3},1001},{{4},1001}}};
+    std::vector<Route> routes;
+    std::vector<Group> groups;
+    explicit Scheduler(std::vector<Route> configured): routes(std::move(configured)) {
+        error=validateRoutes(routes); failed=!error.empty();
+        if(failed) { routes.clear(); return; }
+        for(size_t i=0;i<routes.size();++i) {
+            const auto& r=routes[i];
+            if(static_cast<size_t>(r.group)==groups.size()) groups.push_back(Group{{},r.duration});
+            groups[r.group].indices.push_back(i);
+        }
+    }
     bool failed = false;
     std::string error;
     // One latest source is latched by the adapter for this whole tick. All
     // members prepare before either is scheduled. No per-member source drops.
     bool tick(Driver& driver) {
         if (failed) return false;
-        for (int g=0;g<3;++g) {
+        for (int g=0;g<static_cast<int>(groups.size());++g) {
             auto& group=groups[g];
             unsigned maximum=0, minimum=queueLimit;
             for (auto i:group.indices) {
@@ -54,7 +73,7 @@ public:
             if (maximum-minimum>1) return fail(driver,"Fill/key queues diverged; keys cleared");
             if (maximum==queueLimit) continue;
             for (auto i:group.indices)
-                if (!driver.prepare(i,routes()[i].key?Content::whiteKey:Content::picture))
+                if (!driver.prepare(i,routes[i].key?Content::whiteKey:Content::picture))
                     return fail(driver,"Cannot prepare paired output frames");
             for (unsigned n=maximum;n<queueLimit;++n) {
                 for (auto i:group.indices)
@@ -74,10 +93,10 @@ public:
         bool ok=true;
         // Stop paired clocks first, clear only key endpoints, give the black
         // matte time to leave SDI, then disable and restore prior group values.
-        for (int g=0;g<3;++g) { if (!driver.stop(g)) ok=false; groups[g].started=false; }
-        for (size_t i=0;i<routes().size();++i) if (routes()[i].key && !driver.clear(i)) ok=false;
+        for (int g=0;g<static_cast<int>(groups.size());++g) { if (!driver.stop(g)) ok=false; groups[g].started=false; }
+        for (size_t i=0;i<routes.size();++i) if (routes[i].key && !driver.clear(i)) ok=false;
         driver.settleClear();
-        for (size_t i=0;i<routes().size();++i) if (!driver.release(i)) ok=false;
+        for (size_t i=0;i<routes.size();++i) if (!driver.release(i)) ok=false;
         if (!ok) { failed=true; error += " Output cleanup failed; inspect hardware before reuse."; }
         return ok;
     }

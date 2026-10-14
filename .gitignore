@@ -11,3 +11,7 @@ companion-module-presentation-mode/
 # Machine-specific diagnostics and Blackmagic Desktop Video profiles stay local.
 HardwareSnapshots/
 machine-snapshots/
+
+.build-production/
+dist-production/
+validation/

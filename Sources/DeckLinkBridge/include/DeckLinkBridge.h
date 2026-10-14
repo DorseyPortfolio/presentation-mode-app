@@ -17,6 +17,9 @@ typedef struct PMDeckLinkDeviceInfo {
     bool supports_1080p5994_bgra;
     bool supports_1080p50;
     bool supports_sync_group;
+    int64_t physical_group;
+    bool has_physical_group;
+    uint32_t mode_mask;
     char display_name[256];
 } PMDeckLinkDeviceInfo;
 
@@ -30,7 +33,16 @@ typedef struct PMDeckLinkSession PMDeckLinkSession;
 PMDeckLinkSession* pm_decklink_session_create(void);
 void pm_decklink_session_destroy(PMDeckLinkSession* session);
 
-/// Starts the verified Largo Pro1 route, only when explicitly armed by environment.
+typedef struct PMDeckLinkRoute {
+    const char* id;
+    const char* label;
+    int32_t group;
+    bool key;
+    int64_t duration;
+} PMDeckLinkRoute;
+/// Copies a validated route while stopped; never enumerates or enables hardware.
+int32_t pm_decklink_session_configure(PMDeckLinkSession*, const PMDeckLinkRoute*, size_t, char*, size_t);
+/// Starts the configured route, only when explicitly armed by environment.
 int32_t pm_decklink_session_start(PMDeckLinkSession*, char*, size_t);
 /// Copies latest BGRA desktop; the scheduler repeats it at each group's cadence.
 int32_t pm_decklink_session_enqueue_pixel_buffer(PMDeckLinkSession*, void*, char*, size_t);

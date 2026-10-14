@@ -10,3 +10,6 @@ swiftc -module-cache-path .build/module-cache Sources/PresentationMode/BuildPoli
 .build/offline/validation-policy-tests
 swiftc -D PRESENTATION_MODE_PRODUCTION -module-cache-path .build/module-cache Sources/PresentationMode/BuildPolicy.swift Tests/Offline/BuildPolicyTests.swift -o .build/offline/production-policy-tests
 .build/offline/production-policy-tests
+
+swiftc -module-cache-path .build/module-cache Sources/PresentationMode/RoomProfiles.swift Tests/Offline/RoomProfileTests.swift -o .build/offline/room-profile-tests
+.build/offline/room-profile-tests

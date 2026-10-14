@@ -4,8 +4,8 @@ set -eu
 project_dir=$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd)
 flavor=${PRESENTATION_MODE_BUILD_FLAVOR:-validation}
 case "$flavor" in
-    validation) build_dir="$project_dir/.build"; output_dir=${1:-"$project_dir/dist"}; app_name="Presentation Mode Largo Validation.app" ;;
-    production) build_dir="$project_dir/.build-production"; output_dir=${1:-"$project_dir/dist-production"}; app_name="Presentation Mode.app" ;;
+    validation) build_dir="$project_dir/.build"; output_dir=${1:-"$project_dir/dist"}; app_name="Presentation Mode Settings Preview.app" ;;
+    production) echo "Settings preview is isolated; production packaging requires release review." >&2; exit 1 ;;
     *) echo "Unknown build flavor: $flavor" >&2; exit 1 ;;
 esac
 app_dir="$output_dir/$app_name"

@@ -7,7 +7,8 @@ import Foundation
 struct DeckLinkOutput: Identifiable, Equatable {
     let id: String
     let name: String
-    let supports1080p5994: Bool
+    let capability: OutputCapability
+    var supports1080p5994: Bool { capability.modes & OutputTiming.p5994.mask != 0 }
 }
 
 /// DeckLink is intentionally isolated here so the controller and capture pipeline
@@ -31,10 +32,6 @@ final class DeckLinkService: @unchecked Sendable {
     var dependencyMessage: String? {
         if outputs.isEmpty {
             return "No active playback-capable DeckLink outputs were found. Check Desktop Video Setup and the card profile."
-        }
-        let unsupported = outputs.filter { !$0.supports1080p5994 }
-        if !unsupported.isEmpty {
-            return "Some DeckLink endpoints do not support 1080p59.94 BGRA in the current profile."
         }
         return nil
     }
@@ -66,7 +63,7 @@ final class DeckLinkService: @unchecked Sendable {
             return DeckLinkOutput(
                 id: stableID,
                 name: name.isEmpty ? "DeckLink output" : name,
-                supports1080p5994: record.supports_1080p5994_bgra
+                capability: OutputCapability(id: stableID, name: name, modes: record.mode_mask, physicalGroup: record.has_physical_group ? record.physical_group : nil, synchronized: record.supports_sync_group)
             )
         }
 
@@ -80,13 +77,34 @@ final class DeckLinkService: @unchecked Sendable {
             return DeckLinkOutput(
                 id: output.id,
                 name: "\(output.name) — Card \(suffix)",
-                supports1080p5994: output.supports1080p5994
+                capability: output.capability
             )
         }
 
         for output in outputs {
             print("DeckLink: \(output.name) [\(output.id)] 1080p59.94 BGRA=\(output.supports1080p5994)")
         }
+    }
+
+    func configure(_ profile: RoomProfile, validateDevices: Bool = true) throws {
+        let problems = profile.problems(devices: validateDevices ? outputs.map(\.capability) : nil)
+        guard problems.isEmpty else { throw ProfileError.invalid(problems.joined(separator: "\n")) }
+        var strings: [UnsafeMutablePointer<CChar>] = []
+        defer { strings.forEach { free($0) } }
+        func owned(_ text: String) -> UnsafePointer<CChar> {
+            let pointer = strdup(text)!
+            strings.append(pointer); return UnsafePointer(pointer)
+        }
+        var routes: [PMDeckLinkRoute] = []
+        for (group, d) in profile.destinations.enumerated() {
+            routes.append(PMDeckLinkRoute(id: owned(d.picture), label: owned(d.name + " picture"), group: Int32(group), key: false, duration: d.timing.duration))
+            if let key = d.key {
+                routes.append(PMDeckLinkRoute(id: owned(key), label: owned(d.name + " key"), group: Int32(group), key: true, duration: d.timing.duration))
+            }
+        }
+        var error = Array<CChar>(repeating: 0, count: 1024)
+        let result = routes.withUnsafeBufferPointer { pm_decklink_session_configure(session, $0.baseAddress, $0.count, &error, error.count) }
+        guard result == 0 else { throw ProfileError.invalid(Self.decodeError(error)) }
     }
 
     func start() throws {

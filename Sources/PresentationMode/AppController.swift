@@ -3,6 +3,9 @@ import CoreGraphics
 
 @MainActor
 final class AppController: NSObject {
+    private let profileStore = RoomProfileStore()
+    private var profiles = RoomProfileLibrary.initial
+    private var profileLoadError: String?
     private let store: ConfigurationStoring
     private let captureService = DisplayCaptureService()
     private let deckLinkService = DeckLinkService()
@@ -29,7 +32,7 @@ final class AppController: NSObject {
     private let canvaButton = NSButton(title: "CANVA MODE", target: nil, action: nil)
     private let productionButton = NSButton(title: "PRODUCTION MODE", target: nil, action: nil)
     private let window = NSWindow(
-        contentRect: NSRect(x: 0, y: 0, width: 620, height: 690),
+        contentRect: NSRect(x: 0, y: 0, width: 960, height: 790),
         styleMask: [.titled, .closable, .miniaturizable],
         backing: .buffered,
         defer: false
@@ -54,6 +57,10 @@ final class AppController: NSObject {
 
     func launch() {
         deckLinkService.discover()
+        do {
+            profiles = try profileStore.load()
+            if let active = profiles.active { try deckLinkService.configure(active, validateDevices: false) }
+        } catch { profileLoadError = error.localizedDescription }
         configureWindow()
         configureStatusItem()
         // Expose validation controls before the operator hands over outputs.
@@ -118,14 +125,14 @@ final class AppController: NSObject {
     }
 
     private func configureWindow() {
-        window.title = BuildPolicy.isProduction ? "Presentation Mode" : "Presentation Mode — Largo Validation"
+        window.title = BuildPolicy.isProduction ? "Presentation Mode" : "Presentation Mode — Settings Preview"
         window.center()
         window.isReleasedWhenClosed = false
 
         let title = NSTextField(labelWithString: "Room Display Mode")
         title.font = .systemFont(ofSize: 28, weight: .bold)
 
-        let subtitle = NSTextField(wrappingLabelWithString: "Largo Pro1 opaque desktop: separate picture and solid key outputs. Production Mode clears the keys and releases the cards.")
+        let subtitle = NSTextField(wrappingLabelWithString: "Opaque desktop to the applied room destinations. Production Mode clears keys and releases the cards. Routing changes are tucked away in Setup.")
         subtitle.textColor = .secondaryLabelColor
 
         automaticSwitchingCheckbox.target = self
@@ -137,14 +144,12 @@ final class AppController: NSObject {
         displayPopup.target = self
         displayPopup.action = #selector(displayChanged)
 
-        let outputsLabel = NSTextField(labelWithString: "Verified Largo Pro1 outputs")
+        let outputsLabel = NSTextField(labelWithString: "Applied room profile")
         outputsLabel.font = .systemFont(ofSize: 13, weight: .semibold)
         outputStack.orientation = .vertical
         outputStack.alignment = .leading
         outputStack.spacing = 4
-        for line in ["Side: Top 4 fill + Top 2 key • 1080p50", "LED: Bottom 1 fill + Bottom 4 key • 1080p59.94", "Confidence: Bottom 2 picture • 1080p59.94"] {
-            outputStack.addArrangedSubview(NSTextField(labelWithString: line))
-        }
+        refreshProfileSummary()
 
         let ndiLabel = NSTextField(labelWithString: "NDI output (optional)")
         ndiLabel.font = .systemFont(ofSize: 13, weight: .semibold)
@@ -180,12 +185,18 @@ final class AppController: NSObject {
         stack.spacing = 12
         stack.setCustomSpacing(24, after: subtitle)
         stack.translatesAutoresizingMaskIntoConstraints = false
-        window.contentView = NSView()
-        window.contentView?.addSubview(stack)
+        let controls = NSView()
+        controls.addSubview(stack)
+        let tabs = NSTabView(frame: NSRect(x: 0, y: 0, width: 960, height: 790))
+        let controlTab = NSTabViewItem(identifier: "controls"); controlTab.label = "Controls"; controlTab.view = controls
+        let setupTab = NSTabViewItem(identifier: "setup"); setupTab.label = "Setup"
+        setupTab.view = SetupView(saved: { [unowned self] in self.profiles }, devices: { [unowned self] in self.deckLinkService.outputs.map(\.capability) }, stopped: { [unowned self] in self.outputsStopped }, refresh: { [unowned self] in self.deckLinkService.discover() }, apply: { [unowned self] library in try self.applyProfiles(library) })
+        tabs.addTabViewItem(controlTab); tabs.addTabViewItem(setupTab); tabs.selectTabViewItem(at: 0)
+        window.contentView = tabs
         NSLayoutConstraint.activate([
-            stack.leadingAnchor.constraint(equalTo: window.contentView!.leadingAnchor, constant: 32),
-            stack.trailingAnchor.constraint(equalTo: window.contentView!.trailingAnchor, constant: -32),
-            stack.topAnchor.constraint(equalTo: window.contentView!.topAnchor, constant: 28),
+            stack.leadingAnchor.constraint(equalTo: controls.leadingAnchor, constant: 32),
+            stack.trailingAnchor.constraint(equalTo: controls.trailingAnchor, constant: -32),
+            stack.topAnchor.constraint(equalTo: controls.topAnchor, constant: 28),
             canvaButton.widthAnchor.constraint(equalTo: stack.widthAnchor),
             productionButton.widthAnchor.constraint(equalTo: stack.widthAnchor),
             displayPopup.widthAnchor.constraint(equalTo: stack.widthAnchor),
@@ -193,6 +204,28 @@ final class AppController: NSObject {
         ])
 
         renderState(message: deckLinkService.dependencyMessage)
+    }
+
+    private var outputsStopped: Bool { !isTransitioning && mode == .production && !deckLinkService.isRunning && !ndiService.isRunning }
+    private func refreshProfileSummary() {
+        outputStack.arrangedSubviews.forEach { outputStack.removeArrangedSubview($0); $0.removeFromSuperview() }
+        for d in profiles.active?.destinations ?? [] {
+            outputStack.addArrangedSubview(NSTextField(labelWithString: "\(d.name): \(d.key == nil ? "Direct" : "Fill + Key") • \(d.timing.rawValue)"))
+        }
+        if let error = profileLoadError { outputStack.addArrangedSubview(NSTextField(wrappingLabelWithString: error)) }
+    }
+    private func applyProfiles(_ library: RoomProfileLibrary) throws {
+        guard outputsStopped else { throw ProfileError.invalid("Stop all outputs before applying settings.") }
+        try library.validate()
+        guard let active = library.active else { throw ProfileError.invalid("Select a room profile.") }
+        deckLinkService.discover()
+        try deckLinkService.configure(active)
+        do { try profileStore.save(library) }
+        catch {
+            if let previous = profiles.active { try? deckLinkService.configure(previous, validateDevices: false) }
+            throw error
+        }
+        profiles = library; profileLoadError = nil; refreshProfileSummary()
     }
 
     private func configureStatusItem() {
@@ -289,6 +322,10 @@ final class AppController: NSObject {
             lastError = ""
             // Check permission before claiming outputs; never prompt in a retry loop.
             guard CGPreflightScreenCaptureAccess() else { throw DisplayCaptureService.CaptureError.permissionUnavailable }
+            if let error = profileLoadError { throw ProfileError.invalid(error) }
+            guard let active = profiles.active else { throw ProfileError.invalid("No active room profile.") }
+            deckLinkService.discover()
+            try deckLinkService.configure(active)
             try deckLinkService.start()
             if configuration.ndiEnabled == true {
                 try ndiService.start(sourceName: configuration.ndiSourceName ?? "")
