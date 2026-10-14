@@ -481,12 +481,10 @@ int32_t pm_decklink_session_configure(PMDeckLinkSession* session,const PMDeckLin
 }
 int32_t pm_decklink_session_start(PMDeckLinkSession* session,char* error,size_t capacity) {
     if(!session) return -1;
-    // An isolated candidate cannot drive outputs simply by being opened.
-    #ifndef PM_PRODUCTION_BUILD
-    const char* gate=std::getenv("PRESENTATION_MODE_ENABLE_HARDWARE");
-    if(!gate || std::strcmp(gate,"1")!=0) {
-        writeError(error,capacity,"Validation candidate: hardware output is not armed.");return -1;
-    }
+    // Offline lifecycle tests must never enumerate devices or claim live outputs.
+    // Packaged apps are ready for the operator's explicit Canva Mode action.
+    #ifdef PM_OFFLINE_TEST_BUILD
+    writeError(error,capacity,"Offline test build: hardware output is disabled.");return -1;
     #endif
     std::lock_guard<std::mutex> lock(session->mutex);
     if(session->running) {writeError(error,capacity,"Already running");return -1;}

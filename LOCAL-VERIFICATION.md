@@ -1,3 +1,5 @@
+> Superseded startup policy: see NORMAL-LAUNCH-BUILD12.md. Packaged build 12 supports hardware on normal launch; no arming command is needed. Older verification below records the build 11 checkpoint.
+
 # Final local verification and cleanup
 
 Joseph approved the Settings layout. Code remains at the hardware-first implementation; final source history also records this verification note.

@@ -7,9 +7,6 @@ enum BuildPolicy {
 #else
     static let isProduction = false
 #endif
-    static func hardwareAllowed(environment: [String: String] = ProcessInfo.processInfo.environment) -> Bool {
-        isProduction || environment["PRESENTATION_MODE_ENABLE_HARDWARE"] == "1"
-    }
     static func companionEnabled(environment: [String: String] = ProcessInfo.processInfo.environment) -> Bool {
         isProduction || environment["PRESENTATION_MODE_ENABLE_COMPANION"] == "1"
     }

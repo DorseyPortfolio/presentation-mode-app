@@ -1,3 +1,5 @@
+> Superseded startup policy: see NORMAL-LAUNCH-BUILD12.md. Packaged build 12 supports hardware on normal launch; no arming command is needed. Older verification below records the build 11 checkpoint.
+
 # Hardware-first Setup preview — 0.5.0/build11
 
 Current implementation: one white-theme Outputs sidebar containing actual SDK output names, concise Direct/Fill+Key/timing subtext, inactive/input-only/unconfigured states, and disabled Key source for [fill] rows. Right pane selects Direct or Fill+Key, an eligible key output and a supported timing. Selected output is always Fill. Switching to Direct/removing assignment releases its key in the draft. Existing named Largo assignments survive unchanged as profile data; those names do not organize Setup. Controls shows Room profile loaded and the applied name; errors have an honest fallback with details in Setup.

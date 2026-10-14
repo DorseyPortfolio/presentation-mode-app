@@ -1,0 +1,5 @@
+# Normal launch update — build 12
+
+Joseph requested that the installed preview work when opened normally, without a developer command. Build 12 removes the Swift and native runtime hardware arming gates. Canva Mode explicitly starts outputs; the preview still opens in Production Mode with outputs stopped. Companion network policy is unchanged. Offline native tests compile with PM_OFFLINE_TEST_BUILD, which prevents hardware initialization regardless of environment.
+
+Build, strict signature verification and the full offline suite passed. The verified build 11 preview was backed up with preferences under continuation/rollback/settings-preview-build11 before updating /Applications/Presentation Mode.app. The original accepted 0.4.5 rollback remains preserved. No live outputs were started during this update. Opening the installed app normally was tested; physical screen verification remains with the operator. Source publication remains ProductionMac-only. Previously prepared transfer archive and Library handoff document describe build 11 and must be refreshed before transfer.

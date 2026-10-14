@@ -303,11 +303,6 @@ final class AppController: NSObject {
 
     private func enterCanvaMode() async {
         guard !isTransitioning, mode != .canva else { return }
-        guard BuildPolicy.hardwareAllowed() else {
-            let access = CGPreflightScreenCaptureAccess() ? "available" : "not granted"
-            renderState(message: "Outputs are not armed. Screen Recording access: \(access). No permission request was made.")
-            return
-        }
         isTransitioning = true
         transitionGeneration += 1
         let generation = transitionGeneration
