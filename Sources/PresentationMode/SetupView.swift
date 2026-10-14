@@ -1,6 +1,11 @@
 import AppKit
 
 @MainActor
+private final class TopAlignedClipView: NSClipView {
+    override var isFlipped: Bool { true }
+}
+
+@MainActor
 final class SetupView: NSView {
     private var draft: RoomProfileLibrary
     private let saved: () -> RoomProfileLibrary
@@ -33,6 +38,7 @@ final class SetupView: NSView {
         matte.textColor = .secondaryLabelColor
         rows.orientation = .vertical; rows.alignment = .leading; rows.spacing = 12
         let scroll = NSScrollView(); scroll.hasVerticalScroller = true
+        scroll.contentView = TopAlignedClipView()
         scroll.documentView = rows; rows.translatesAutoresizingMaskIntoConstraints = false
         NSLayoutConstraint.activate([rows.leadingAnchor.constraint(equalTo: scroll.contentView.leadingAnchor), rows.topAnchor.constraint(equalTo: scroll.contentView.topAnchor), rows.widthAnchor.constraint(equalTo: scroll.contentView.widthAnchor)])
         diagnostics.font = .monospacedSystemFont(ofSize: 11, weight: .regular)
@@ -75,6 +81,7 @@ final class SetupView: NSView {
     @objc private func validateDraft() {
         collect()
         let errors = draft.profiles[index].problems(devices: devices())
+        guard errors.isEmpty else { diagnostics.stringValue = errors.joined(separator: "\n"); return }
         do { try draft.validate() } catch { diagnostics.stringValue = error.localizedDescription; return }
         diagnostics.stringValue = errors.isEmpty ? "Draft valid. \(devices().count) active endpoints. Hardware availability is checked again at start. Changes are not applied." : errors.joined(separator: "\n")
     }

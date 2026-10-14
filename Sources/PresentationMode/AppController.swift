@@ -216,6 +216,10 @@ final class AppController: NSObject {
     }
     private func applyProfiles(_ library: RoomProfileLibrary) throws {
         guard outputsStopped else { throw ProfileError.invalid("Stop all outputs before applying settings.") }
+        if let active = library.active {
+            let errors = active.problems()
+            guard errors.isEmpty else { throw ProfileError.invalid(errors.joined(separator: "\n")) }
+        }
         try library.validate()
         guard let active = library.active else { throw ProfileError.invalid("Select a room profile.") }
         deckLinkService.discover()
