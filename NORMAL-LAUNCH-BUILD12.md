@@ -1,3 +1,5 @@
+> Supplied pre-publication record. Joseph subsequently approved source and documentation publication to DorseyPortfolio/presentation-mode-app from ProductionMac. Statements below that transfer/publication is pending describe the earlier checkpoint; physical output verification remains pending. See [PUBLICATION-VERIFICATION.md](PUBLICATION-VERIFICATION.md) for this publication.
+
 # Normal launch update — build 12
 
 Joseph requested that the installed preview work when opened normally, without a developer command. Build 12 removes the Swift and native runtime hardware arming gates. Canva Mode explicitly starts outputs; the preview still opens in Production Mode with outputs stopped. Companion network policy is unchanged. Offline native tests compile with PM_OFFLINE_TEST_BUILD, which prevents hardware initialization regardless of environment.

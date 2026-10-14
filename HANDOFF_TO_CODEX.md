@@ -1,3 +1,5 @@
+> Historical record from an earlier version. Commands, package contents and validation claims below describe that checkpoint. For 0.5.0/build 12, use [README.md](README.md) and [PUBLICATION-VERIFICATION.md](PUBLICATION-VERIFICATION.md).
+
 # Presentation Mode — DeckLink Mac handoff
 
 ## Objective

@@ -1,3 +1,5 @@
+> Supplied pre-publication record. Joseph subsequently approved source and documentation publication to DorseyPortfolio/presentation-mode-app from ProductionMac. Statements below that transfer/publication is pending describe the earlier checkpoint; physical output verification remains pending. See [PUBLICATION-VERIFICATION.md](PUBLICATION-VERIFICATION.md) for this publication.
+
 # Current local verification — build 12
 
 Build 12 source commit fd492cc removes Swift and native runtime arming requirements. The app opens normally with outputs stopped; Canva Mode starts hardware. Offline bridge tests now compile with PM_OFFLINE_TEST_BUILD and cannot claim hardware. Companion policy is unchanged.

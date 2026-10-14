@@ -1,4 +1,4 @@
-> Superseded startup policy: see NORMAL-LAUNCH-BUILD12.md. Packaged build 12 supports hardware on normal launch; no arming command is needed. Older verification below records the build 11 checkpoint.
+> Historical build 11 checkpoint: installed-app, hardware gate and publication-hold statements below have been superseded. Current build 12 publication and remaining hardware limits are recorded in [PUBLICATION-VERIFICATION.md](PUBLICATION-VERIFICATION.md). Superseded startup policy: see NORMAL-LAUNCH-BUILD12.md. Packaged build 12 supports hardware on normal launch; no arming command is needed. Older verification below records the build 11 checkpoint.
 
 # Hardware-first Setup preview — 0.5.0/build11
 

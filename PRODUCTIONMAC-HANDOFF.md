@@ -1,3 +1,5 @@
+> Supplied pre-publication record. Joseph subsequently approved source and documentation publication to DorseyPortfolio/presentation-mode-app from ProductionMac. Statements below that transfer/publication is pending describe the earlier checkpoint; physical output verification remains pending. See [PUBLICATION-VERIFICATION.md](PUBLICATION-VERIFICATION.md) for this publication.
+
 # ProductionMac handoff — Presentation Mode
 
 ## Current checkpoint
